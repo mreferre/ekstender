@@ -1,0 +1,34 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: "ekstender-ingress"
+  namespace: kube-system
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  labels:
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /dashboard
+            backend:
+              serviceName: "kubernetes-dashboard"
+              servicePort: 8443
+    - http:
+        paths:
+          - path: /prometheus
+            backend:
+              serviceName: "prometheus-server"
+              servicePort: 80
+    - http:
+        paths:
+          - path: /grafana
+            backend:
+              serviceName: "grafana"
+              servicePort: 80
+
+
+
+

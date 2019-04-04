@@ -1,0 +1,21 @@
+apiVersion: eksctl.io/v1alpha4
+kind: ClusterConfig
+metadata:
+  name: cluster-mreferre
+  region: us-west-2
+nodeGroups:
+  - name: ng-1-workers
+    labels:
+      role: workers
+    instanceType: m5.xlarge
+    desiredCapacity: 3
+    privateNetworking: true
+  - name: ng-2-builders
+    labels:
+      role: builders
+    instanceType: m5.2xlarge
+    desiredCapacity: 2
+    privateNetworking: true
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
