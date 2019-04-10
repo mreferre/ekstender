@@ -30,7 +30,8 @@ This is a list of modules, features and configurations that `EKStender` enables 
 -  ALB Ingress controller 
 -  Calico network policy engine  
 -  Prometheus (by default it is NOT exposed through a Load Balancer, not that it should!)
--  Grafana (exposed through a Load Balancer 
+-  Grafana (exposed through a Load Balancer)
+-  The [yelb](https://github.com/mreferre/yelb) demo application (exposed through the ALB Ingress Controller)
 
 In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. 
 
