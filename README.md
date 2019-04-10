@@ -30,7 +30,8 @@ This is a list of modules, features and configurations that `EKStender` enables 
 -  ALB Ingress controller 
 -  Calico network policy engine  
 -  Prometheus (by default it is NOT exposed through a Load Balancer, not that it should!)
--  Grafana (exposed through a Load Balancer 
+-  Grafana (exposed through a Load Balancer)
+-  The [yelb](https://github.com/mreferre/yelb) demo application (exposed through the ALB Ingress Controller)
 
 In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. 
 
@@ -64,7 +65,7 @@ You need to check the variable session at the beginning. At a minimum, you shoul
 
 Once this is done, you can run `./ekstender.sh` from the `eksutil` shell. `EKStender` should work from other shells (provided you have all the tools configured e.g. kubectl, AWS CLI, jq, helm, etc. etc.). Note that `EKStender` logs by default to a file called `ekstender.log` in the directory where you launch it. If you use it from within `eksutil` note that it will not persist when you exit the container (you can easily fix it by mounting a directory and log there instead).
 
-A good by-product of using kubectl to deploy these add-ons is that it makes the script idempotent by nature. You can run it multiple times against the same cluster. Since some of the tools use Helm (which is deployed by `EKStender` early in the flow) for their own setup, it required a bit of if-then-else logic to make the script fully idempotent.  
+A good by-product of using kubectl to deploy these add-ons is that it makes the script idempotent by nature. You can run it multiple times against the same cluster. Since some of the tools use Helm (which is deployed by `EKStender` early in the flow) for their own setup, it required a bit of if-then-else logic to make the script fully idempotent. 
 
 #### Known issues and limitations
 
@@ -77,6 +78,5 @@ There are just too many to list all of them. Some notable limitations are:
 - Not all tools and projects can be deployed to a custom namespace. Some of these still have `kube-system` hard wired in the configuration files and these would need to be worked on 
 - The logging solution (based on `fluentd`) and the ALB Ingress controller requires custom IAM policies to be added to the instance role. If you try to `eksctl delete` a cluster that has these policies configured Cloudformation will fail. Remove them before  `eksctl delete` the cluster 
 - In general, there isn't a good way to roll-back what `EKStender` deployed. The fact that the NAMESPACE and CLUSTERNAME are parametrized on the fly (piping the YAML into a variable and using sed to parametrize its value) makes it impossible to just replay all the `kubectl` commands with `delete` instead of just `apply`. The easiest for now to clean a cluster is to `eksctl delete` it
-- You can opt to expose Prometheus by changing the `EXTERNALPROMETHEUS` variable from the default `no` to `yes` but that is not working for now (investigating). This however remains a bad practice. 
 
 

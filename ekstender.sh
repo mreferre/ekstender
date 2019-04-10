@@ -19,9 +19,10 @@
 export REGION=us-west-2
 export NODES=6 # this is only used if you want to deploy the cluster as part of the process 
 export CLUSTERNAME=amazing-party-1554300136
-export NODE_INSTANCE_ROLE=eksctl-amazing-party-1554300136-n-NodeInstanceRole-XXXXXXXXXXXXX # the IAM role assigned to the worker nodes 
+export NODE_INSTANCE_ROLE=eksctl-amazing-party-1554300136-n-NodeInstanceRole-XXXXXXXXX # the IAM role assigned to the worker nodes 
 export EXTERNALDASHBOARD=yes 
-export EXTERNALPROMETHEUS=no
+export EXTERNALPROMETHEUS=no 
+export DEMOAPP=yes 
 export NAMESPACE="kube-system"
 ###########################################################
 ###########           END OF USER INPUTS        ###########
@@ -86,6 +87,7 @@ welcome() {
   logger "yellow" "Kubernetes Namespace  : $NAMESPACE"
   logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
+  logger "yellow" "Demo application      : $DEMOAPP"
   logger "green" "Press [Enter] to continue or CTRL-C to abort..."
   read -p " "
 }
@@ -181,24 +183,30 @@ albingresscontroller() {
 
 prometheus() {
   logger "green" "Prometheus setup is starting..."
-  template=`cat "./configurations/prometheus-storageclass.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
+  #template=`cat "./configurations/prometheus-storageclass.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
+  #errorcheck ${FUNCNAME}
+  #echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  #errorcheck ${FUNCNAME}
   chart=`/usr/local/bin/helm list prometheus --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
   if [[ $chart = "prometheus" ]]; 
       then logger "blue" "Prometheus is already installed. Skipping..."; 
-      else /usr/local/bin/helm install -f configurations/prometheus-values.yaml stable/prometheus --name prometheus --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
-  fi
-  if [[ $EXTERNALPROMETHEUS = "yes" ]]; 
-      then kubectl get service prometheus-server-external -n $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
-           if [[ $? = 0 ]];
-                then logger "blue" "Prometheus is already exposed to the Internet. Skipping...";
-                else kubectl expose deployment prometheus-server --type=LoadBalancer --name=prometheus-server-external -n $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ; 
-                     errorcheck ${FUNCNAME}
-                     logger "blue" "Warning: I am exposing Prometheus to the Internet...";
-           fi;
-      else logger "blue" "Prometheus is not being exposed to the Internet......";
+      else if [[ $EXTERNALPROMETHEUS = "yes" ]]; 
+                then /usr/local/bin/helm install stable/prometheus \
+                                      --name prometheus \
+                                      --namespace $NAMESPACE \
+                                      --set alertmanager.persistentVolume.storageClass="gp2" \
+                                      --set server.persistentVolume.storageClass="gp2" \
+                                      --set server.service.type=LoadBalancer >> "${LOG_OUTPUT}" 2>&1 
+                    errorcheck ${FUNCNAME}
+                    logger "blue" "Prometheus is being exposed to the Internet......";
+                else /usr/local/bin/helm install stable/prometheus \
+                                      --name prometheus \
+                                      --namespace $NAMESPACE \
+                                      --set alertmanager.persistentVolume.storageClass="gp2" \
+                                      --set server.persistentVolume.storageClass="gp2" >> "${LOG_OUTPUT}" 2>&1 
+                      errorcheck ${FUNCNAME}
+                      logger "blue" "Prometheus is not being exposed to the Internet......";
+           fi   
   fi
   errorcheck ${FUNCNAME}
   logger "green" "Prometheus has been installed properly!"
@@ -224,15 +232,34 @@ calico() {
   logger "green" "Calico has been installed properly!"
 }
 
+demoapp() {
+  logger "green" "Demo application setup is starting..."
+  if [ ! -d yelb ]; then git clone https://github.com/mreferre/yelb >> "${LOG_OUTPUT}" 2>&1
+  fi 
+  errorcheck ${FUNCNAME}
+  kubectl apply -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  logger "green" "Demo application has been installed properly!"
+}
+
 congratulations() {
+  sleep 5
   GRAFANAELB=`kubectl get service grafana -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}  
+  PROMETHEUSELB=`kubectl get service prometheus-server -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   DASHBOARDELB=`kubectl get service kubernetes-dashboard-external -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
   logger "green" "Your EKStended kubernetes environment is ready to be used now"
+  logger "green" "------"
   logger "yellow" "Grafana UI           : http://"$GRAFANAELB 
+  logger "yellow" "Prometheus UI        : http://"$PROMETHEUSELB
   logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB":8443" 
+  logger "yellow" "Demo application     : https://"$DEMOAPPALBURL
+  logger "green" "------"
   logger "green" "Enjoy!"
 }
 
@@ -247,6 +274,7 @@ main() {
   calico
   prometheus 
   grafana 
+  demoapp
   congratulations
 }
 
