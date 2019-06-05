@@ -31,6 +31,8 @@ This is a list of modules, features and configurations that `EKStender` enables 
 -  Calico network policy engine  
 -  Prometheus (by default it is NOT exposed through a Load Balancer, not that it should!)
 -  Grafana (exposed through a Load Balancer)
+-  Metric Server (to allow for Horizontal Autoscaler to work)
+-  Cluster Autoscaler 
 -  The [yelb](https://github.com/mreferre/yelb) demo application (exposed through the ALB Ingress Controller)
 
 In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. 
@@ -57,7 +59,12 @@ Any feedback is greatly appreciated.
 
 #### Getting started
 
-The best way to use EKStender is from withing an [eksutils](https://github.com/mreferre/eksutils) shell. 
+It is assumed that a cluster exists and that kubectl can talk to it without further configurations (e.g. no need to specify the `--kubeconfig` option). It is suggested leveraging `eksctl` to create the cluster and this is a good starting point:
+```
+eksctl create cluster --name=eks1 --nodes=3 --nodes-min=2 --nodes-max=4 --ssh-public-key=<key name> --region=<region> --asg-access
+```
+
+The best way to use `EKStender` is from within an [eksutils](https://github.com/mreferre/eksutils) shell. 
 
 Clone the EKStender project with `git clone https://github.com/mreferre/ekstender`, move inside the `ekstender` directory and edit the `ekstender.sh` file. 
 
@@ -73,10 +80,9 @@ There are just too many to list all of them. Some notable limitations are:
 
 - The file `ekstender.sh` needs to be manually edited to enter the name of the cluster, the instance role name and the region for it to work properly. Some level of automation can be achieved to extract these info but there are lot of corner cases (e.g. an environment with multiple clusters/contexts defined) where this may be difficult to achieve properly
 - Because some of the tools and projects require additional IAM policies to be attached to the nodes, `EKStender` adds those policies to the IAM roles identified by the `NODE_INSTANCE_ROLE`. The script only supports one role and hence one `eksctl` nodegroup. If you have more than one nodegroup you could try to add those policies manually to the other roles. 
-- there is seeding logic inside the `ekstender.sh` script to deploy the EKS cluster as part of the first step of the deployment flow but because of the manual requirement to parametrize it with the cluster specific info, this option is not working. It is assumed that a cluster exists and that kubectl can talk to it without further configurations (e.g. the need to specify the `--kubeconfig` option)
-- Perhaps it would make more sense to be able to selectively deploy what a user needs Vs. deploying everything regardless. This could be achieved by either creating an interactive setup (e.g. "chose what you want to deploy from this list") or by setting environmental variables inside the script in the user inputs section (e.g. `export DASHBOARD=yes`)
-- Not all tools and projects can be deployed to a custom namespace. Some of these still have `kube-system` hard wired in the configuration files and these would need to be worked on 
+- Perhaps it would make more sense to be able to selectively deploy what a user needs Vs. deploying everything regardless. This could be achieved by either creating an interactive setup (e.g. "chose what you want to deploy from this list") or by setting environmental variables inside the script in the user inputs section (e.g. what has already been done with `export DASHBOARD=yes`)
+- In theory you should be able to deploy in a namespace that is not `kube-system`. In practice deploying into a namespace that is not `kube-system` won't work. Right now all deployments are being done in `kube-system`
 - The logging solution (based on `fluentd`) and the ALB Ingress controller requires custom IAM policies to be added to the instance role. If you try to `eksctl delete` a cluster that has these policies configured Cloudformation will fail. Remove them before  `eksctl delete` the cluster 
-- In general, there isn't a good way to roll-back what `EKStender` deployed. The fact that the NAMESPACE and CLUSTERNAME are parametrized on the fly (piping the YAML into a variable and using sed to parametrize its value) makes it impossible to just replay all the `kubectl` commands with `delete` instead of just `apply`. The easiest for now to clean a cluster is to `eksctl delete` it
+- In general, there isn't a solid way to roll-back what `EKStender` deployed. There is an experimental `cleanup_ekstender.sh` script in the repo that should roll-back the majority of the `EKStender` modules. The cleanup script is only meant to leave the cluster in a state that would allow for an easy `eksctl delete` (hint: there could be zombie objects such as SGs that will still prevent that) 
 
 

@@ -47,7 +47,7 @@ tolerations: []
 affinity: {}
 persistence:
   enabled: true
-  storageClassName: prometheus
+  storageClassName: gp2
 adminUser: admin
 adminPassword: EKS!sAWSome
 env: {}

@@ -17,9 +17,11 @@
 ###########              USER INPUTS            ###########
 ###########################################################
 export REGION=us-west-2
-export NODES=6 # this is only used if you want to deploy the cluster as part of the process 
-export CLUSTERNAME=amazing-party-1554300136
-export NODE_INSTANCE_ROLE=eksctl-amazing-party-1554300136-n-NodeInstanceRole-XXXXXXXXX # the IAM role assigned to the worker nodes 
+export CLUSTERNAME=eks1
+export NODE_INSTANCE_ROLE=eksctl-eks1-nodegroup-ng-65104b3e-NodeInstanceRole-XXXXXXXXX # the IAM role assigned to the worker nodes
+export AUTOSCALINGGROUPNAME=eksctl-eks1-nodegroup-ng-65104b3e-NodeGroup-XXXXXXX # the name of the ASG
+export MINNODES=2 # the min number of nodes in the ASG
+export MAXNODES=4 # the max number of nodes in the ASG
 export EXTERNALDASHBOARD=yes 
 export EXTERNALPROMETHEUS=no 
 export DEMOAPP=yes 
@@ -85,6 +87,9 @@ welcome() {
   logger "yellow" "AWS Region            : $REGION"
   logger "yellow" "Node Instance Role    : $NODE_INSTANCE_ROLE"
   logger "yellow" "Kubernetes Namespace  : $NAMESPACE"
+  logger "yellow" "ASG Name              : $AUTOSCALINGGROUPNAME"
+  logger "yellow" "Min Number of Nodes   : $MINNODES"
+  logger "yellow" "Max Number of Nodes   : $MAXNODES"
   logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
   logger "yellow" "Demo application      : $DEMOAPP"
@@ -92,17 +97,20 @@ welcome() {
   read -p " "
 }
 
-createcluster() {
-  logger "green" "Ekstender launched with the from-scratch switch: EKS cluster creation initiated. This may take a few minutes..."
-  eksctl create cluster --name=$CLUSTERNAME --nodes=$NODES --node-ami=auto --region=$REGION >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  logger "green" "EKS cluster creation concluded..."
-
+preparenamespace() {
+  ns=`kubectl get namespace $NAMESPACE --output json | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = $NAMESPACE ]]; 
+      then logger "blue" "Namespace exists. Skipping..."; 
+      else kubectl create namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
+      logger "blue" "Namespace created...";
+  fi
 }
 
-admin-sa() {
+admin_sa() {
   logger "green" "Creation of the generic eks-admin service account is starting..."
-  kubectl apply -f configurations/eks-admin-service-account.yaml >> "${LOG_OUTPUT}" 2>&1
+  template=`cat "./configurations/eks-admin-service-account.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   logger "green" "Creation of the generic eks-admin service account has completed..."
 }
@@ -127,27 +135,36 @@ helm() {
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
   # for some reasons running helm without the explicit path will cause this function to loop (to be investigated)
-  /usr/local/bin/helm init --service-account tiller >> "${LOG_OUTPUT}" 2>&1 
+  /usr/local/bin/helm init --service-account tiller --tiller-namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   # we apparently need to sync the helm client and server (reference: https://github.com/helm/charts/issues/5239)
   # wonder what the ramifications of a complex production setup may be
   /usr/local/bin/helm init --upgrade >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  sleep 10
+  logger "green" "Waiting for the tiller pod to come up..."
+  sleep 90
   logger "green" "Helm has been installed properly!"
 }
 
 dashboard() {
   logger "green" "Dashboard setup is starting..."
   # source: https://docs.aws.amazon.com/eks/latest/userguide/dashboard-tutorial.html
-  kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml >> "${LOG_OUTPUT}" 2>&1  
+  template=`curl -sS https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  kubectl apply -f https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/heapster.yaml >> "${LOG_OUTPUT}" 2>&1 
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
-  kubectl apply -f https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/influxdb.yaml >> "${LOG_OUTPUT}" 2>&1 
+  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/heapster.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  kubectl apply -f https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/rbac/heapster-rbac.yaml >> "${LOG_OUTPUT}" 2>&1
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
+  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/influxdb.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
+  errorcheck ${FUNCNAME}  
+  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/rbac/heapster-rbac.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
+  errorcheck ${FUNCNAME}    
   if [[ $EXTERNALDASHBOARD = "yes" ]]; 
       then kubectl get service kubernetes-dashboard-external -n $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
            if [[ $? = 0 ]];
@@ -179,6 +196,17 @@ albingresscontroller() {
   errorcheck ${FUNCNAME}
   # background: https://github.com/pahud/eks-alb-ingress 
   logger "green" "ALB Ingress controller has been installed properly!"
+}
+
+calico() {
+  logger "green" "Calico setup is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/calico.html 
+  # This one will be installed in kube-system. To change the ns one would need to put the yaml in the configurations directory and parametrize it
+  template=`curl -sS https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.3/calico.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
+  errorcheck ${FUNCNAME}
+  logger "green" "Calico has been installed properly!"
 }
 
 prometheus() {
@@ -223,13 +251,26 @@ grafana() {
   logger "green" "Grafana has been installed properly!"
 }
 
-calico() {
-  logger "green" "Calico setup is starting..."
-  # source: https://docs.aws.amazon.com/eks/latest/userguide/calico.html 
-  # This one will be installed in kube-system. To change the ns one would need to put the yaml in the configurations directory and parametrize it
-  kubectl apply -f https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.3/calico.yaml >> "${LOG_OUTPUT}" 2>&1 
+metricserver() {
+  logger "green" "Metric server deployment is starting..."
+  chart=`/usr/local/bin/helm list metric-server --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $chart = "metric-server" ]]; 
+      then logger "blue" "Metric server is already installed. Skipping..."; 
+      else helm install stable/metrics-server --name metric-server --version 2.0.4 --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
+  fi
   errorcheck ${FUNCNAME}
-  logger "green" "Calico has been installed properly!"
+  logger "green" "Metric server has been installed properly!"
+}
+
+clusterautoscaler() {
+  logger "green" "Cluster Autoscaler deployment is starting..."
+  # the iam policy ASG-Policy-For-Worker may be redundant if the cluster is installed with eksctl and the --asg-access flag 
+  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ASG-Policy-For-Worker --policy-document file://./configurations/k8s-asg-policy.json >> "${LOG_OUTPUT}" 2>&1 
+  template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/AUTOSCALINGGROUPNAME/$AUTOSCALINGGROUPNAME/g" -e "s/MINNODES/$MINNODES/g" -e "s/MAXNODES/$MAXNODES/g" -e "s/AWSREGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  logger "green" "Cluster Autoscaler has been installed properly!"
 }
 
 demoapp() {
@@ -243,7 +284,8 @@ demoapp() {
 }
 
 congratulations() {
-  sleep 5
+  logger "yellow" "Almost there..."
+  sleep 30
   GRAFANAELB=`kubectl get service grafana -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}  
   PROMETHEUSELB=`kubectl get service prometheus-server -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
@@ -253,20 +295,20 @@ congratulations() {
   DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
-  logger "green" "Your EKStended kubernetes environment is ready to be used now"
+  logger "green" "Your EKStended kubernetes environment is ready to be used"
   logger "green" "------"
   logger "yellow" "Grafana UI           : http://"$GRAFANAELB 
   logger "yellow" "Prometheus UI        : http://"$PROMETHEUSELB
   logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB":8443" 
-  logger "yellow" "Demo application     : https://"$DEMOAPPALBURL
+  logger "yellow" "Demo application     : http://"$DEMOAPPALBURL
   logger "green" "------"
   logger "green" "Enjoy!"
 }
 
 main() {
-  #if [[ $1 = "from-scratch" ]]; then createcluster; else logger "blue" "Skipping cluster creation...";fi
   welcome
-  admin-sa
+  preparenamespace
+  admin_sa
   logging
   helm
   dashboard
@@ -274,6 +316,8 @@ main() {
   calico
   prometheus 
   grafana 
+  metricserver
+  clusterautoscaler
   demoapp
   congratulations
 }
