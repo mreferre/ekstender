@@ -16,16 +16,17 @@
 ###########################################################
 ###########              USER INPUTS            ###########
 ###########################################################
-export REGION=us-west-2
-export CLUSTERNAME=eks1
-export NODE_INSTANCE_ROLE=eksctl-eks1-nodegroup-ng-65104b3e-NodeInstanceRole-XXXXXXXXX # the IAM role assigned to the worker nodes
-export AUTOSCALINGGROUPNAME=eksctl-eks1-nodegroup-ng-65104b3e-NodeGroup-XXXXXXX # the name of the ASG
-export MINNODES=2 # the min number of nodes in the ASG
-export MAXNODES=4 # the max number of nodes in the ASG
-export EXTERNALDASHBOARD=yes 
-export EXTERNALPROMETHEUS=no 
-export DEMOAPP=yes 
-export NAMESPACE="kube-system"
+: ${VAR:=foo}    
+: ${REGION:=us-west-2} 
+: ${CLUSTERNAME:=eks1} 
+: ${NODE_INSTANCE_ROLE:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeInstanceRole-XXXXXXXX}  # the IAM role assigned to the worker nodes
+: ${AUTOSCALINGGROUPNAME:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeGroup-XXXXXXXX}  # the name of the ASG
+: ${MINNODES:=2}  # the min number of nodes in the ASG
+: ${MAXNODES:=4}  # the max number of nodes in the ASG
+: ${EXTERNALDASHBOARD:=yes}  
+: ${EXTERNALPROMETHEUS:=yes}  
+: ${DEMOAPP:=yes}  
+: ${NAMESPACE:="kube-system"} 
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
@@ -115,26 +116,38 @@ admin_sa() {
   logger "green" "Creation of the generic eks-admin service account has completed..."
 }
 
-logging() {
-  logger "green" "Logging configuration is starting..."
-  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name Logs-Policy-For-Worker --policy-document file://./configurations/k8s-logs-policy.json >> "${LOG_OUTPUT}" 2>&1 
+#logging() {
+#  logger "green" "Logging configuration is starting..."
+#  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name Logs-Policy-For-Worker --policy-document file://./configurations/k8s-logs-policy.json >> "${LOG_OUTPUT}" 2>&1 
+#  errorcheck ${FUNCNAME}
+#  template=`cat "./configurations/fluentd.yaml" | sed -e "s/CLUSTERNAME/$CLUSTERNAME/g" -e "s/AWS_REGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+#  errorcheck ${FUNCNAME}
+#  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1 
+#  errorcheck ${FUNCNAME}
+#  logger "green" "Logging has been configured properly!"
+#}
+
+calico() {
+  logger "green" "Calico setup is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/calico.html 
+  template=`curl -sS https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.4/calico.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`cat "./configurations/fluentd.yaml" | sed -e "s/CLUSTERNAME/$CLUSTERNAME/g" -e "s/AWS_REGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  logger "green" "Logging has been configured properly!"
+  logger "green" "Waiting for Calico pods to come up..."
+  #this would need a proper check instead of a sleep 
+  sleep 10
+  logger "green" "Calico has been installed properly!"
 }
 
-helm() {
+tiller() {
   logger "green" "Helm setup is starting..."
   curl -o get_helm.sh https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get >> "${LOG_OUTPUT}" 2>&1 
   chmod +x get_helm.sh >> "${LOG_OUTPUT}" 2>&1 
   ./get_helm.sh >> "${LOG_OUTPUT}" 2>&1 
-  template=`cat "./configurations/tiller-service-account.yaml" | sed "s/NAMESPACE/$NAMESPACE/g"`
+  template=`cat "./configurations/tiller-service-account.yaml" | sed "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
-  # for some reasons running helm without the explicit path will cause this function to loop (to be investigated)
   /usr/local/bin/helm init --service-account tiller --tiller-namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   # we apparently need to sync the helm client and server (reference: https://github.com/helm/charts/issues/5239)
@@ -142,8 +155,21 @@ helm() {
   /usr/local/bin/helm init --upgrade >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   logger "green" "Waiting for the tiller pod to come up..."
-  sleep 90
-  logger "green" "Helm has been installed properly!"
+  tillerpodline=`kubectl get pod -A | grep tiller` >> "${LOG_OUTPUT}" 2>&1 
+  tillerpod=`echo $tillerpodline | awk '{print $2}'` >> "${LOG_OUTPUT}" 2>&1 
+  while [[ $(kubectl get pods -n $NAMESPACE $tillerpod -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}') != "True" ]]; do echo "waiting for $tillerpod pod" && sleep 1; done >> "${LOG_OUTPUT}" 2>&1 
+  logger "green" "Tiller has been installed properly!"
+}
+
+metricserver() {
+  logger "green" "Metric server deployment is starting..."
+  chart=`/usr/local/bin/helm list metric-server --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $chart = "metric-server" ]]; 
+      then logger "blue" "Metric server is already installed. Skipping..."; 
+      else /usr/local/bin/helm install stable/metrics-server --name metric-server --version 2.0.4 --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
+  fi
+  errorcheck ${FUNCNAME}
+  logger "green" "Metric server has been installed properly!"
 }
 
 dashboard() {
@@ -198,17 +224,6 @@ albingresscontroller() {
   logger "green" "ALB Ingress controller has been installed properly!"
 }
 
-calico() {
-  logger "green" "Calico setup is starting..."
-  # source: https://docs.aws.amazon.com/eks/latest/userguide/calico.html 
-  # This one will be installed in kube-system. To change the ns one would need to put the yaml in the configurations directory and parametrize it
-  template=`curl -sS https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.3/calico.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
-  errorcheck ${FUNCNAME}
-  logger "green" "Calico has been installed properly!"
-}
-
 prometheus() {
   logger "green" "Prometheus setup is starting..."
   #template=`cat "./configurations/prometheus-storageclass.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
@@ -245,21 +260,60 @@ grafana() {
   chart=`/usr/local/bin/helm list grafana --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
   if [[ $chart = "grafana" ]]; 
       then logger "blue" "Grafana is already installed. Skipping..."; 
-      else /usr/local/bin/helm install -f configurations/grafana-values.yaml stable/grafana --name grafana --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
+      else # /usr/local/bin/helm install -f configurations/grafana-values.yaml stable/grafana --name grafana --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
+          /usr/local/bin/helm install stable/grafana \
+            --name grafana \
+            --namespace $NAMESPACE \
+            --set persistence.storageClassName="gp2" \
+            --set adminPassword="EKS!sAWSome" \
+            --set datasources."datasources\.yaml".apiVersion=1 \
+            --set datasources."datasources\.yaml".datasources[0].name=Prometheus \
+            --set datasources."datasources\.yaml".datasources[0].type=prometheus \
+            --set datasources."datasources\.yaml".datasources[0].url=http://prometheus-server.$NAMESPACE.svc.cluster.local \
+            --set datasources."datasources\.yaml".datasources[0].access=proxy \
+            --set datasources."datasources\.yaml".datasources[0].isDefault=true \
+            --set service.type=LoadBalancer >> "${LOG_OUTPUT}" 2>&1 ;
   fi
   errorcheck ${FUNCNAME}
   logger "green" "Grafana has been installed properly!"
 }
 
-metricserver() {
-  logger "green" "Metric server deployment is starting..."
-  chart=`/usr/local/bin/helm list metric-server --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
-  if [[ $chart = "metric-server" ]]; 
-      then logger "blue" "Metric server is already installed. Skipping..."; 
-      else helm install stable/metrics-server --name metric-server --version 2.0.4 --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
+cloudwatchcontainerinsights() {
+  logger "green" "CloudWatch Containers Insights setup is starting..."
+  aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-serviceaccount.yaml >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  template=`cat "./cwagent-serviceaccount.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-configmap.yaml >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster-name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME} 
+  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-daemonset.yaml >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  template=`cat "./cwagent-daemonset.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME} 
+  # ------
+  clusterinfo=`kubectl get configmap cluster-info -n $NAMESPACE --output json --ignore-not-found | jq --raw-output .metadata.name` >> "${LOG_OUTPUT}" 2>&1
+  if [[ $clusterinfo = "cluster-info" ]]; 
+      then logger "blue" "The cluster-info configmap is already there. Skipping..."; 
+      else kubectl create configmap cluster-info --from-literal=cluster.name=$CLUSTERNAME --from-literal=logs.region=$REGION -n $NAMESPACE  >> "${LOG_OUTPUT}" 2>&1 ;
   fi
   errorcheck ${FUNCNAME}
-  logger "green" "Metric server has been installed properly!"
+  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/fluentd/fluentd.yml >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  template=`cat "./fluentd.yml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME} 
+  logger "green" "CloudWatch Containers Insights has been installed properly!"
 }
 
 clusterautoscaler() {
@@ -285,7 +339,7 @@ demoapp() {
 
 congratulations() {
   logger "yellow" "Almost there..."
-  sleep 30
+  sleep 10
   GRAFANAELB=`kubectl get service grafana -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}  
   PROMETHEUSELB=`kubectl get service prometheus-server -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
@@ -302,6 +356,7 @@ congratulations() {
   logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB":8443" 
   logger "yellow" "Demo application     : http://"$DEMOAPPALBURL
   logger "green" "------"
+  logger "green" "Note that it may take a few minutes for these end-points to be operational"
   logger "green" "Enjoy!"
 }
 
@@ -309,14 +364,15 @@ main() {
   welcome
   preparenamespace
   admin_sa
-  logging
-  helm
+  #logging
+  calico
+  tiller
+  metricserver
   dashboard
   albingresscontroller
-  calico
-  prometheus 
+  prometheus
   grafana 
-  metricserver
+  cloudwatchcontainerinsights
   clusterautoscaler
   demoapp
   congratulations
