@@ -18,13 +18,13 @@ The bash code included in `ekstender.sh` is no magic and comes from multiple sou
 
 Note: while `EKStender` may come handy for quick tests, demos and learning sessions, some of the default choices in the deployment flow do not follow standard best practices (e.g. exposing the Kubernetes Dashboard via an external load balancer). Do not do this in a production setup! 
 
-`EKStender` would/should work with a regular upstream K8s setup but this was only tested with Amazon EKS. 
+`EKStender` would/should work with a regular upstream K8s setup but this was only tested with Amazon EKS (and in particular with setups done with [eksctl](https://github.com/weaveworks/eksctl)).
 
 #### What stack does EKStender deploy?
 
 This is a list of modules, features and configurations that `EKStender` enables on a vanilla EKS cluster (deployed with eksctl):
 
--  CloudWatch Container Insights (which includes logging to CW)
+-  CloudWatch Container Insights
 -  Helm tiller service
 -  Kubernetes Dashboard (by default it is also exposed through a Load Balancer, but you can opt out)
 -  ALB Ingress controller 
