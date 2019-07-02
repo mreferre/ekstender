@@ -21,12 +21,14 @@
 : ${CLUSTERNAME:=eks1} 
 : ${NODE_INSTANCE_ROLE:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeInstanceRole-XXXXXXXX}  # the IAM role assigned to the worker nodes
 : ${AUTOSCALINGGROUPNAME:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeGroup-XXXXXXXX}  # the name of the ASG
-: ${MINNODES:=2}  # the min number of nodes in the ASG
-: ${MAXNODES:=4}  # the max number of nodes in the ASG
+: ${MINNODES:=3}  # the min number of nodes in the ASG
+: ${MAXNODES:=6}  # the max number of nodes in the ASG
 : ${EXTERNALDASHBOARD:=yes}  
 : ${EXTERNALPROMETHEUS:=yes}  
 : ${DEMOAPP:=yes}  
-: ${NAMESPACE:="kube-system"} 
+: ${KUBEFLOW:=yes}
+: ${NAMESPACE:="kube-system"}
+: ${MESH_NAME:="ekstender-mesh"}
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
@@ -94,6 +96,7 @@ welcome() {
   logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
   logger "yellow" "Demo application      : $DEMOAPP"
+  logger "yellow" "Kubeflow              : $KUBEFLOW"
   logger "green" "Press [Enter] to continue or CTRL-C to abort..."
   read -p " "
 }
@@ -115,17 +118,6 @@ admin_sa() {
   errorcheck ${FUNCNAME}
   logger "green" "Creation of the generic eks-admin service account has completed..."
 }
-
-#logging() {
-#  logger "green" "Logging configuration is starting..."
-#  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name Logs-Policy-For-Worker --policy-document file://./configurations/k8s-logs-policy.json >> "${LOG_OUTPUT}" 2>&1 
-#  errorcheck ${FUNCNAME}
-#  template=`cat "./configurations/fluentd.yaml" | sed -e "s/CLUSTERNAME/$CLUSTERNAME/g" -e "s/AWS_REGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-#  errorcheck ${FUNCNAME}
-#  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1 
-#  errorcheck ${FUNCNAME}
-#  logger "green" "Logging has been configured properly!"
-#}
 
 calico() {
   logger "green" "Calico setup is starting..."
@@ -220,6 +212,7 @@ albingresscontroller() {
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  sleep 15
   # background: https://github.com/pahud/eks-alb-ingress 
   logger "green" "ALB Ingress controller has been installed properly!"
 }
@@ -327,6 +320,29 @@ clusterautoscaler() {
   logger "green" "Cluster Autoscaler has been installed properly!"
 }
 
+appmesh() {
+  logger "green" "Appmesh components setup is starting..."
+  # https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html
+  curl -o ./configurations/appmeshall.yaml https://raw.githubusercontent.com/aws/aws-app-mesh-controller-for-k8s/v0.1.1/deploy/all.yaml  >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  template=`cat "./configurations/appmeshall.yaml" | sed -e "s/namespace: appmesh-system/namespace: $NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1   
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  curl -o install.sh https://raw.githubusercontent.com/aws/aws-app-mesh-inject/v0.1.4/scripts/install.sh >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  chmod +x install.sh  >> "${LOG_OUTPUT}" 2>&1
+  ./install.sh  >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  # for now I am enabling only the default namespace to inject the sidecar automatically
+  # given the default namespace I am deploying to (and the only one that works today) is 'kube-system' I don't want to enable that label there 
+  kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook=enabled --overwrite >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  logger "green" "Appmesh components have been installed properly"
+}
+
 demoapp() {
   logger "green" "Demo application setup is starting..."
   if [ ! -d yelb ]; then git clone https://github.com/mreferre/yelb >> "${LOG_OUTPUT}" 2>&1
@@ -334,12 +350,51 @@ demoapp() {
   errorcheck ${FUNCNAME}
   kubectl apply -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  # without the following sleep a potential race condition creating the demo app ingress and the kubeflow ingress (below) is noticed
+  # this sleep may be possibly reduced but this would require further investigation and a potentially more elegant solution   
+  sleep 120 
   logger "green" "Demo application has been installed properly!"
+}
+
+kubeflow () {
+  logger "green" "Kubeflow setup is starting..."
+  if [ ! -d kubeflow-aws ]; then 
+    mkdir ./kubeflow-aws >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    cd kubeflow-aws >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    export KUBEFLOW_SRC=$(pwd)
+    export KUBEFLOW_TAG=v0.5-branch
+    curl -sS https://raw.githubusercontent.com/kubeflow/kubeflow/${KUBEFLOW_TAG}/scripts/download.sh | bash >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    export KFAPP=kfapp
+    cd ${KUBEFLOW_SRC} >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    ${KUBEFLOW_SRC}/scripts/kfctl.sh init ${KFAPP} --platform aws \
+    --awsClusterName ${CLUSTERNAME} \
+    --awsRegion ${REGION} \
+    --awsNodegroupRoleNames ${NODE_INSTANCE_ROLE} >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    cd ${KFAPP} >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    ${KUBEFLOW_SRC}/scripts/kfctl.sh generate platform  >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    ${KUBEFLOW_SRC}/scripts/kfctl.sh apply platform >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    ${KUBEFLOW_SRC}/scripts/kfctl.sh generate k8s >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    ${KUBEFLOW_SRC}/scripts/kfctl.sh apply k8s >> "${LOG_OUTPUT}" 2>&1
+    errorcheck ${FUNCNAME}
+    cd ../..
+    logger "green" "Kubeflow has been installed properly!";
+    else logger "blue" "Kubeflow seems to be already installed. Skipping..."; 
+    fi;
 }
 
 congratulations() {
   logger "yellow" "Almost there..."
-  sleep 20
+  # instead of the sleep below a selective poll should be created that waits till the endpoints are available.  
+  sleep 40
   GRAFANAELB=`kubectl get service grafana -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}  
   PROMETHEUSELB=`kubectl get service prometheus-server -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
@@ -348,6 +403,8 @@ congratulations() {
   errorcheck ${FUNCNAME}
   DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  KUBEFLOWALBURL=`kubectl get ingress -n istio-system --output json | jq --raw-output .items[0].status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
   logger "green" "Your EKStended kubernetes environment is ready to be used"
   logger "green" "------"
@@ -355,8 +412,10 @@ congratulations() {
   logger "yellow" "Prometheus UI        : http://"$PROMETHEUSELB
   logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB":8443" 
   logger "yellow" "Demo application     : http://"$DEMOAPPALBURL
+  logger "yellow" "Kubeflow             : http://"$KUBEFLOWALBURL
   logger "green" "------"
-  logger "green" "Note that it may take a few minutes for these end-points to be operational"
+  logger "green" "Note that it may take several minutes for these end-points to be fully operational"
+  logger "green" "If you see a <null> value you specifically opted out for that particular feature or the LB isn't ready yet (check with kubectl)"
   logger "green" "Enjoy!"
 }
 
@@ -364,7 +423,6 @@ main() {
   welcome
   preparenamespace
   admin_sa
-  #logging
   calico
   tiller
   metricserver
@@ -374,7 +432,9 @@ main() {
   grafana 
   cloudwatchcontainerinsights
   clusterautoscaler
-  demoapp
+  appmesh
+  if [[ $DEMOAPP = "yes" ]]; then demoapp; fi;
+  if [[ $KUBEFLOW = "yes" ]]; then kubeflow; fi;
   congratulations
 }
 
