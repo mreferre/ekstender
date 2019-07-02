@@ -21,7 +21,7 @@
 : ${CLUSTERNAME:=eks1} 
 : ${NODE_INSTANCE_ROLE:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeInstanceRole-XXXXXXXX}  # the IAM role assigned to the worker nodes
 : ${AUTOSCALINGGROUPNAME:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeGroup-XXXXXXXX}  # the name of the ASG
-: ${MINNODES:=3}  # the min number of nodes in the ASG
+: ${MINNODES:=2}  # the min number of nodes in the ASG
 : ${MAXNODES:=6}  # the max number of nodes in the ASG
 : ${EXTERNALDASHBOARD:=yes}  
 : ${EXTERNALPROMETHEUS:=yes}  
