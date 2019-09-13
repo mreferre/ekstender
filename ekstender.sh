@@ -16,22 +16,28 @@
 ###########################################################
 ###########              USER INPUTS            ###########
 ###########################################################
-: ${VAR:=foo}    
-: ${REGION:=us-west-2} 
-: ${CLUSTERNAME:=eks1} 
-: ${NODE_INSTANCE_ROLE:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeInstanceRole-XXXXXXXX}  # the IAM role assigned to the worker nodes
-: ${AUTOSCALINGGROUPNAME:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeGroup-XXXXXXXX}  # the name of the ASG
+: ${REGION:=$(aws configure get region)}
 : ${MINNODES:=2}  # the min number of nodes in the ASG
 : ${MAXNODES:=6}  # the max number of nodes in the ASG
 : ${EXTERNALDASHBOARD:=yes}  
 : ${EXTERNALPROMETHEUS:=yes}  
 : ${DEMOAPP:=yes}  
-: ${KUBEFLOW:=yes}
+: ${KUBEFLOW:=no}
 : ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
+export MESH_NAME
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
+
+###########################################################
+###########    EXTRACTING REQUIRED PARAMETERS   ###########
+###########################################################
+# scripts read $1 as clustername. If $1 is not used it defaults to eks1
+if [ -z "$1" ]; then "Please specify the cluster you want to EKStend!"; exit; else export CLUSTERNAME=$1; fi
+export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTERNAME --region $REGION  -o json | jq -r '.[].StackName')
+: ${NODE_INSTANCE_ROLE:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )}  # the IAM role assigned to the worker nodes
+: ${AUTOSCALINGGROUPNAME:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeGroup") | .PhysicalResourceId')}  # the name of the ASG
 
 ###########################################################
 ## DO NOT TOUCH THESE UNLESS YOU KNOW WHAT YOU ARE DOING ##
@@ -95,6 +101,7 @@ welcome() {
   logger "yellow" "Max Number of Nodes   : $MAXNODES"
   logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
+  logger "yellow" "Mesh Name             : $MESH_NAME"
   logger "yellow" "Demo application      : $DEMOAPP"
   logger "yellow" "Kubeflow              : $KUBEFLOW"
   logger "green" "Press [Enter] to continue or CTRL-C to abort..."
@@ -323,16 +330,17 @@ clusterautoscaler() {
 appmesh() {
   logger "green" "Appmesh components setup is starting..."
   # https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html
-  curl -o ./configurations/appmeshall.yaml https://raw.githubusercontent.com/aws/aws-app-mesh-controller-for-k8s/v0.1.1/deploy/all.yaml  >> "${LOG_OUTPUT}" 2>&1 
+  curl -o ./configurations/appmeshall.yaml https://raw.githubusercontent.com/aws/aws-app-mesh-controller-for-k8s/master/deploy/all.yaml  >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`cat "./configurations/appmeshall.yaml" | sed -e "s/namespace: appmesh-system/namespace: $NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1   
+  template=`cat "./configurations/appmeshall.yaml"` >> "${LOG_OUTPUT}" 2>&1   
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  curl -o install.sh https://raw.githubusercontent.com/aws/aws-app-mesh-inject/v0.1.4/scripts/install.sh >> "${LOG_OUTPUT}" 2>&1
+  curl -o install.sh https://raw.githubusercontent.com/aws/aws-app-mesh-inject/master/scripts/install.sh >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  echo "The mesh name is: " $MESH_NAME >> "${LOG_OUTPUT}" 2>&1
   chmod +x install.sh  >> "${LOG_OUTPUT}" 2>&1
   ./install.sh  >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
@@ -386,6 +394,7 @@ kubeflow () {
     ${KUBEFLOW_SRC}/scripts/kfctl.sh apply k8s >> "${LOG_OUTPUT}" 2>&1
     errorcheck ${FUNCNAME}
     cd ../..
+    sleep 120 
     logger "green" "Kubeflow has been installed properly!";
     else logger "blue" "Kubeflow seems to be already installed. Skipping..."; 
     fi;
@@ -401,9 +410,9 @@ congratulations() {
   errorcheck ${FUNCNAME}
   DASHBOARDELB=`kubectl get service kubernetes-dashboard-external -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  if [[ $DEMOAPP = "yes" ]]; then DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname`; fi >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  KUBEFLOWALBURL=`kubectl get ingress -n istio-system --output json | jq --raw-output .items[0].status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  if [[ $KUBEFLOW = "yes" ]]; then KUBEFLOWALBURL=`kubectl get ingress -n istio-system --output json | jq --raw-output .items[0].status.loadBalancer.ingress[0].hostname`; fi >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
   logger "green" "Your EKStended kubernetes environment is ready to be used"
@@ -415,7 +424,7 @@ congratulations() {
   logger "yellow" "Kubeflow             : http://"$KUBEFLOWALBURL
   logger "green" "------"
   logger "green" "Note that it may take several minutes for these end-points to be fully operational"
-  logger "green" "If you see a <null> value you specifically opted out for that particular feature or the LB isn't ready yet (check with kubectl)"
+  logger "green" "If you see a <null> or no value you specifically opted out for that particular feature or the LB isn't ready yet (check with kubectl)"
   logger "green" "Enjoy!"
 }
 

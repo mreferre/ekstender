@@ -1,37 +1,39 @@
 #!/bin/bash
 
-: ${VAR:=foo}    
-: ${REGION:=us-west-2} 
-: ${CLUSTERNAME:=eks1} 
-: ${NODE_INSTANCE_ROLE:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeInstanceRole-XXXXXXXX}  # the IAM role assigned to the worker nodes
-: ${AUTOSCALINGGROUPNAME:=eksctl-eks1-nodegroup-ng-7abe0bdc-NodeGroup-XXXXXXXX}  # the name of the ASG
-: ${MINNODES:=2}  # the min number of nodes in the ASG
-: ${MAXNODES:=6}  # the max number of nodes in the ASG
-: ${EXTERNALDASHBOARD:=yes}  
-: ${EXTERNALPROMETHEUS:=yes}  
-: ${DEMOAPP:=yes}  
-: ${KUBEFLOW:=yes}
-: ${NAMESPACE:="kube-system"} 
+: ${REGION:=$(aws configure get region)}
+: ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
 
-export KUBEFLOW_SRC=$(pwd)/kubeflow-aws
-export KFAPP=kfapp
-cd ${KUBEFLOW_SRC}/${KFAPP}
-${KUBEFLOW_SRC}/scripts/kfctl.sh delete k8s
-cd ../..
-rm -r ./kubeflow-aws
-aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_alb_ingress_policy
-aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_csi_fsx_policy 
+# scripts read $1 as clustername. If $1 is not used it defaults to eks1
+if [ -z "$1" ]; then echo "Please specify the cluster you want to clean!"; exit; else export CLUSTERNAME=$1; fi
+export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTERNAME --region $REGION  -o json | jq -r '.[].StackName')
+: ${NODE_INSTANCE_ROLE:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )}  # the IAM role assigned to the worker nodes
+: ${AUTOSCALINGGROUPNAME:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeGroup") | .PhysicalResourceId')}  # the name of the ASG
+
+if [ -d $(pwd)/kubeflow-aws ]; then
+        export KUBEFLOW_SRC=$(pwd)/kubeflow-aws
+        export KFAPP=kfapp
+        cd ${KUBEFLOW_SRC}/${KFAPP}
+        ${KUBEFLOW_SRC}/scripts/kfctl.sh delete k8s
+        cd ../..
+        rm -r ./kubeflow-aws
+        aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_alb_ingress_policy
+        aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_csi_fsx_policy 
+fi 
 
 # this needs investigation. The command below, when ran in the script can leave a zombie ALB. When ran standalone the ALB typically gets deleted properly 
 # potentially some race conditions between the istio ALB de-registration (as part of the kubeflow uninstall) and this? 
 sleep 10 
-kubectl delete -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE
-sleep 10
+if [ -f ./yelb ]; then
+        kubectl delete -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE
+        sleep 10
+fi 
 
-template=`cat "./configurations/appmeshall.yaml" | sed -e "s/namespace: appmesh-system/namespace: $NAMESPACE/g"`   
-echo "$template" | kubectl delete -f -
-kubectl delete namespace appmesh-inject 
+kubectl delete crd meshes.appmesh.k8s.aws
+kubectl delete crd virtualnodes.appmesh.k8s.aws
+kubectl delete crd virtualservices.appmesh.k8s.aws
+kubectl delete namespace appmesh-system
+kubectl delete namespace appmesh-inject
 aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess
 
 template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/AUTOSCALINGGROUPNAME/$AUTOSCALINGGROUPNAME/g" -e "s/MINNODES/$MINNODES/g" -e "s/MAXNODES/$MAXNODES/g" -e "s/AWSREGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` 
