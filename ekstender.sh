@@ -155,6 +155,8 @@ tiller() {
 
 metricserver() {
   logger "green" "Metric server deployment is starting..."
+  logger "green" "Updating Helm repo"
+  /usr/local/bin/helm repo update >> "${LOG_OUTPUT}" 2>&1 
   chart=`/usr/local/bin/helm list metric-server --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
   if [[ $chart = "metric-server" ]]; 
       then logger "blue" "Metric server is already installed. Skipping..."; 
