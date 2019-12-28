@@ -24,7 +24,7 @@ fi
 # this needs investigation. The command below, when ran in the script can leave a zombie ALB. When ran standalone the ALB typically gets deleted properly 
 # potentially some race conditions between the istio ALB de-registration (as part of the kubeflow uninstall) and this? 
 sleep 10 
-if [ -f ./yelb ]; then
+if [ -d ./yelb ]; then
         kubectl delete -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE
         sleep 10
 fi 
@@ -33,7 +33,14 @@ kubectl delete crd meshes.appmesh.k8s.aws
 kubectl delete crd virtualnodes.appmesh.k8s.aws
 kubectl delete crd virtualservices.appmesh.k8s.aws
 kubectl delete namespace appmesh-system
-kubectl delete namespace appmesh-inject
+# the below needs investigation. The docs say the injector is deployed in appmesh-inject but 
+# it appears to be installing in the appmesh-system namespace (and appmesh-inject is not even created)
+#kubectl delete namespace appmesh-inject
+kubectl delete clusterrolebinding appmesh-inject
+kubectl delete clusterrolebinding app-mesh-controller-binding
+kubectl delete clusterrole appmesh-inject 
+kubectl delete clusterrole app-mesh-controller
+kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook-
 aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess
 
 template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/AUTOSCALINGGROUPNAME/$AUTOSCALINGGROUPNAME/g" -e "s/MINNODES/$MINNODES/g" -e "s/MAXNODES/$MAXNODES/g" -e "s/AWSREGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` 
