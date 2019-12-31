@@ -33,9 +33,6 @@ kubectl delete crd meshes.appmesh.k8s.aws
 kubectl delete crd virtualnodes.appmesh.k8s.aws
 kubectl delete crd virtualservices.appmesh.k8s.aws
 kubectl delete namespace appmesh-system
-# the below needs investigation. The docs say the injector is deployed in appmesh-inject but 
-# it appears to be installing in the appmesh-system namespace (and appmesh-inject is not even created)
-#kubectl delete namespace appmesh-inject
 kubectl delete clusterrolebinding appmesh-inject
 kubectl delete clusterrolebinding app-mesh-controller-binding
 kubectl delete clusterrole appmesh-inject 
