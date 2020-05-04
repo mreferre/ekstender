@@ -358,7 +358,7 @@ demoapp() {
   if [ ! -d yelb ]; then git clone https://github.com/mreferre/yelb >> "${LOG_OUTPUT}" 2>&1
   fi 
   errorcheck ${FUNCNAME}
-  kubectl apply -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE >> "${LOG_OUTPUT}" 2>&1
+  kubectl apply -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb.yaml --namespace=$NAMESPACE >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   # without the following sleep a potential race condition creating the demo app ingress and the kubeflow ingress (below) is noticed
   # this sleep may be possibly reduced but this would require further investigation and a potentially more elegant solution   
