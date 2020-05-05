@@ -112,7 +112,7 @@ A good by-product of using kubectl to deploy these add-ons is that it makes the 
 This is an example of a typical setup 
 
 ```
-sh-4.2# ./ekstender.sh eks2
+sh-4.2# ./ekstender.sh eks1
  2019-09-13 13:39:16 -- ************************************************* 
  2019-09-13 13:39:16 -- ***  Do not run this on a production cluster  *** 
  2019-09-13 13:39:16 -- *** This is solely for demo/learning purposes *** 
@@ -121,9 +121,9 @@ sh-4.2# ./ekstender.sh eks2
  2019-09-13 13:39:16 -- These are the environment settings that are going to be used: 
  2019-09-13 13:39:16 -- Cluster Name          : eks1 
  2019-09-13 13:39:16 -- AWS Region            : us-west-2 
- 2019-09-13 13:39:16 -- Node Instance Role    : eksctl-eks2-nodegroup-ng-9a16907b-NodeInstanceRole-1AS92OJAG6GPG 
+ 2019-09-13 13:39:16 -- Node Instance Role    : eksctl-eks1-nodegroup-ng-9a16907b-NodeInstanceRole-1AS92OJAG6GPG
  2019-09-13 13:39:16 -- Kubernetes Namespace  : kube-system 
- 2019-09-13 13:39:16 -- ASG Name              : eksctl-eks2-nodegroup-ng-9a16907b-NodeGroup-173MMIPFJ79XK 
+ 2019-09-13 13:39:16 -- ASG Name              : eksctl-eks1-nodegroup-ng-9a16907b-NodeGroup-173MMIPFJ79XK
  2019-09-13 13:39:16 -- Min Number of Nodes   : 2 
  2019-09-13 13:39:16 -- Max Number of Nodes   : 6 
  2019-09-13 13:39:16 -- External Dashboard    : yes 
@@ -210,5 +210,4 @@ There are just too many to list all of them. Some notable limitations are:
 - Because some of the tools and projects require additional IAM policies to be attached to the nodes, `EKStender` adds those policies to the IAM roles identified by the `NODE_INSTANCE_ROLE`. The script only supports one role and hence one `eksctl` nodegroup. If you have more than one nodegroup you could try to add those policies manually to the other roles
 - The default of the script is to optimize for usability and not for security. For example by default the Kubeflow, Prometheus and K8s Dashboard interfaces are exposed publicly. You can make Prometheus and the Dashboard private but if you opt to setup Kubeflow (you can opt out) the UI can only be public for now 
 - Perhaps it would make more sense to be able to selectively deploy what a user needs Vs. deploying everything regardless. This could be achieved by either creating an interactive setup (e.g. "chose what you want to deploy from this list") or by setting environmental variables inside the script in the user inputs section (e.g. what has already been done with `export DASHBOARD=yes` or `export KUBEFLOW=yes`)
-
 
