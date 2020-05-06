@@ -317,6 +317,13 @@ cloudwatchcontainerinsights() {
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
+  # Add CloudWatch Agent with Prometheus Metrics Collection
+  curl -O https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  template=`cat "./prometheus-eks.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   logger "green" "CloudWatch Containers Insights has been installed properly!"
 }
 
