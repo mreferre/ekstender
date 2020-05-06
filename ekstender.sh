@@ -17,6 +17,7 @@
 ###########              USER INPUTS            ###########
 ###########################################################
 : ${REGION:=$(aws configure get region)}
+: ${MESH_REGION:=${REGION}}
 : ${MINNODES:=2}  # the min number of nodes in the ASG
 : ${MAXNODES:=6}  # the max number of nodes in the ASG
 : ${EXTERNALDASHBOARD:=yes}  
@@ -26,6 +27,7 @@
 : ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
 export MESH_NAME
+export MESH_REGION
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
