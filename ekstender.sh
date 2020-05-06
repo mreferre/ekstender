@@ -292,7 +292,7 @@ cloudwatchcontainerinsights() {
   errorcheck ${FUNCNAME}
   curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-configmap.yaml >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster-name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1 
+  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster_name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
