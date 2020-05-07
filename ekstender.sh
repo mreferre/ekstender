@@ -17,6 +17,7 @@
 ###########              USER INPUTS            ###########
 ###########################################################
 : ${REGION:=$(aws configure get region)}
+: ${MESH_REGION:=${REGION}}
 : ${MINNODES:=2}  # the min number of nodes in the ASG
 : ${MAXNODES:=6}  # the max number of nodes in the ASG
 : ${EXTERNALDASHBOARD:=yes}  
@@ -26,6 +27,7 @@
 : ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
 export MESH_NAME
+export MESH_REGION
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
@@ -292,7 +294,7 @@ cloudwatchcontainerinsights() {
   errorcheck ${FUNCNAME}
   curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-configmap.yaml >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster-name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1 
+  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster_name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
@@ -315,6 +317,13 @@ cloudwatchcontainerinsights() {
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
+  # Add CloudWatch Agent with Prometheus Metrics Collection
+  curl -O https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  template=`cat "./prometheus-eks.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   logger "green" "CloudWatch Containers Insights has been installed properly!"
 }
 
