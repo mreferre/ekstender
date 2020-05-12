@@ -491,7 +491,7 @@ demoapp() {
   logger "green" "Demo application setup is starting..."
   YELB_UI=$(kubectl get deployment yelb-ui -n default --ignore-not-found | tail -n +2 | awk '{print $1}')
   if [[ $YELB_UI != "yelb-ui" ]];
-    then kubectl apply -n default -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb.yaml >> "${LOG_OUTPUT}" 2>&1
+    then kubectl apply -n default -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb-ip.yaml >> "${LOG_OUTPUT}" 2>&1
          errorcheck ${FUNCNAME};
          sleep 60 
     else logger "blue" "The demo app is already installed. Skipping the setup..."

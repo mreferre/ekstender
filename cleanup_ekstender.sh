@@ -32,7 +32,7 @@ echo REGION              : $REGION
 echo AWS_REGION          : $AWS_REGION
 
 
-kubectl delete -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb.yaml -n default
+kubectl delete -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb-ip.yaml -n default
 
 eksctl delete iamserviceaccount --region $AWS_REGION --name appmesh-controller --namespace appmesh-system --cluster $CLUSTER_NAME
 helm delete appmesh-inject --namespace appmesh-system
