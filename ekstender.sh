@@ -45,6 +45,7 @@ echo "Gathering data about the cluster to EKStend..."
 echo 
 # scripts read $1 as clustername. If $1 is not used it exits
 if [ -z "$1" ]; then echo "Please specify the cluster name you want to EKStend!"; exit; else export CLUSTER_NAME=$1; fi
+if [ -z "$REGION" ]; then echo "Please configure the region in your CLI or export the variable REGION" & exit; fi
 export ACCOUNT_ID=$(aws sts get-caller-identity --output json | jq -r '.Account') # the AWS Account ID 
 export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTER_NAME --region $REGION  -o json | jq -r '.[].StackName')
 export NODE_INSTANCE_ROLE=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )  # the IAM role assigned to the worker nodes
@@ -112,12 +113,13 @@ welcome() {
   logger "red" "*************************************************"
   logger "green" "These are the environment settings that are going to be used:"
   logger "yellow" "Account ID            : $ACCOUNT_ID"
-  logger "yellow" "Cluster Name          : $CLUSTER_NAME"
-  logger "yellow" "AWS Region            : $REGION"
-  logger "yellow" "Node Instance Role    : $NODE_INSTANCE_ROLE"
-  logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
+  logger "yellow" "Cluster name          : $CLUSTER_NAME"
+  logger "yellow" "Cluster version       : $CLUSTER_VERSION"
+  logger "yellow" "AWS region            : $REGION"
+  logger "yellow" "Node instance role    : $NODE_INSTANCE_ROLE"
+  logger "yellow" "External dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
-  logger "yellow" "Mesh Name             : $MESH_NAME"
+  logger "yellow" "Mesh name             : $MESH_NAME"
   logger "yellow" "Demo application      : $DEMOAPP"
   logger "green" "--------------------------------------------------------------"
   logger "green" "You are about to EKStend your EKS cluster with the following add-ons"
