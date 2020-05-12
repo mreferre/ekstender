@@ -461,6 +461,8 @@ appmesh() {
   banner "App Mesh"
   logger "green" "Appmesh components setup is starting..."
   # https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html 
+  kubectl apply -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   ns=`kubectl get namespace appmesh-system --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
   if [[ $ns = appmesh-system ]]; 
       then logger "blue" "Namespace exists. Skipping..."
@@ -547,7 +549,7 @@ main() {
   prometheus #ns = prometheus
   grafana #ns = grafana
   cloudwatchcontainerinsights #ns = amazon-cloudwatch
-  appmesh #ns = appmesh-system + appmesh-inject 
+  appmesh #ns = appmesh-system
   demoapp #ns = default 
   congratulations
 }

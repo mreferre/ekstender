@@ -39,7 +39,7 @@ helm delete appmesh-inject --namespace appmesh-system
 helm delete appmesh-controller --namespace appmesh-system
 kubectl delete namespace appmesh-system --ignore-not-found
 kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook-
-
+kubectl delete -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master
 
 
 # Delete the CW agent beta for Prometheus deletes everything 
@@ -76,6 +76,7 @@ kubectl delete service kubernetes-dashboard-external -n kubernetes-dashboard --i
 kubectl delete -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-beta8/aio/deploy/recommended.yaml
 
 # this script for some reason spits a couple of error messages at the end trying to delete 2 CRDs that it has deleted at the beginning
+if [[ ! -d "autoscaler" ]]; then git clone https://github.com/kubernetes/autoscaler.git; fi   
 ./autoscaler/vertical-pod-autoscaler/hack/vpa-down.sh 
 
 kubectl delete -f ./configurations/cluster_autoscaler.yaml 
