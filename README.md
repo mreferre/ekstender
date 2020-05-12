@@ -22,19 +22,19 @@ While you can make it work with a regular upstream K8s setup, `EKStender` was on
 
 This is a list of modules, features and configurations that `EKStender` enables on a vanilla EKS cluster (deployed with eksctl):
 
-- Calico (network policy engine)"
-- Metrics server"
-- CSI EBS drivers"
-- CSI EFS drivers"
-- CSI FSx drivers"
-- ALB ingress controller"
-- Cluster autoscaler"
-- Vertical pod autoscaler"
-- Kubernetes dashboard"
-- Prometheus"
-- Grafana"
-- CloudWatch Container Insights"
-- AppMesh controller and sidecar injector"
+- Calico (network policy engine)
+- Metrics server
+- CSI EBS drivers
+- CSI EFS drivers
+- CSI FSx drivers
+- ALB ingress controller
+- Cluster autoscaler
+- Vertical pod autoscaler
+- Kubernetes dashboard
+- Prometheus
+- Grafana
+- CloudWatch Container Insights
+- AppMesh controller and sidecar injector
 - Demo application ([Yelb](https://github.com/mreferre/yelb))
 
 In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. 
