@@ -1,90 +1,126 @@
 #!/bin/bash
 
 : ${REGION:=$(aws configure get region)}
+: ${AWS_REGION:=${REGION}} 
+: ${EXTERNALDASHBOARD:=yes}  
+: ${EXTERNALPROMETHEUS:=yes}  
 : ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
+: ${MESH_REGION:=${REGION}} 
+export REGION
+export AWS_REGION
+export EXTERNALDASHBOARD
+export EXTERNALPROMETHEUS
+export NAMESPACE
+export MESH_NAME
+export MESH_REGION
 
-# scripts read $1 as clustername. If $1 is not used it defaults to eks1
-if [ -z "$1" ]; then echo "Please specify the cluster you want to clean!"; exit; else export CLUSTERNAME=$1; fi
-export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTERNAME --region $REGION  -o json | jq -r '.[].StackName')
-: ${NODE_INSTANCE_ROLE:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )}  # the IAM role assigned to the worker nodes
-: ${AUTOSCALINGGROUPNAME:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeGroup") | .PhysicalResourceId')}  # the name of the ASG
+# scripts read $1 as clustername. If $1 is not used it exits
+if [ -z "$1" ]; then echo "Please specify the cluster you want to clean up post EKStention!"; exit; else export CLUSTER_NAME=$1; fi
+export ACCOUNT_ID=$(aws sts get-caller-identity --output json | jq -r '.Account') # the AWS Account ID 
+export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTER_NAME --region $REGION  -o json | jq -r '.[].StackName')
+export NODE_INSTANCE_ROLE=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )  # the IAM role assigned to the worker nodes
+export CLUSTER_VERSION=$(aws eks describe-cluster --name $CLUSTER_NAME | jq --raw-output .cluster.version) # the major/minor version of the EKS cluster
+export VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME | jq --raw-output .cluster.resourcesVpcConfig.vpcId) # the VPC ID of the EKS cluster
 
-if [ -d $(pwd)/kubeflow-aws ]; then
-        export KUBEFLOW_SRC=$(pwd)/kubeflow-aws
-        export KFAPP=kfapp
-        cd ${KUBEFLOW_SRC}/${KFAPP}
-        ${KUBEFLOW_SRC}/scripts/kfctl.sh delete k8s
-        cd ../..
-        rm -r ./kubeflow-aws
-        aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_alb_ingress_policy
-        aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name iam_csi_fsx_policy 
-fi 
+echo ACCOUNT_ID          : $ACCOUNT_ID
+echo STACK_NAME          : $STACK_NAME
+echo NODE_INSTANCE_ROLE  : $NODE_INSTANCE_ROLE
+echo CLUSTER_VERSION     : $CLUSTER_VERSION
+echo VPC_ID              : $VPC_ID
+echo REGION              : $REGION
+echo AWS_REGION          : $AWS_REGION
 
-# this needs investigation. The command below, when ran in the script can leave a zombie ALB. When ran standalone the ALB typically gets deleted properly 
-# potentially some race conditions between the istio ALB de-registration (as part of the kubeflow uninstall) and this? 
-sleep 10 
-if [ -d ./yelb ]; then
-        kubectl delete -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/cnawebapp-ingress-alb.yaml --namespace=$NAMESPACE
-        sleep 10
-fi 
 
-kubectl delete crd meshes.appmesh.k8s.aws
-kubectl delete crd virtualnodes.appmesh.k8s.aws
-kubectl delete crd virtualservices.appmesh.k8s.aws
-kubectl delete namespace appmesh-system
-kubectl delete clusterrolebinding appmesh-inject
-kubectl delete clusterrolebinding app-mesh-controller-binding
-kubectl delete clusterrole appmesh-inject 
-kubectl delete clusterrole app-mesh-controller
+kubectl delete -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb-ip.yaml -n default
+
+eksctl delete iamserviceaccount --region $AWS_REGION --name appmesh-controller --namespace appmesh-system --cluster $CLUSTER_NAME
+helm delete appmesh-inject --namespace appmesh-system
+helm delete appmesh-controller --namespace appmesh-system
+kubectl delete namespace appmesh-system --ignore-not-found
 kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook-
-aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess
+kubectl delete -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master
 
-template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/AUTOSCALINGGROUPNAME/$AUTOSCALINGGROUPNAME/g" -e "s/MINNODES/$MINNODES/g" -e "s/MAXNODES/$MAXNODES/g" -e "s/AWSREGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` 
-echo "$template" | kubectl delete -f -
-aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ASG-Policy-For-Worker
 
-aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy 
-template=`cat "./cwagent-serviceaccount.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` 
-echo "$template" | kubectl delete -f -
-template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster-name}}/$CLUSTERNAME/g"`
+# Delete the CW agent beta for Prometheus deletes everything 
+template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml` 
 echo "$template" | kubectl delete -f - 
-template=`cat "./cwagent-daemonset.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"`
+### CW Fluentd 
+### -----
+##kubectl delete configmap cluster-info -n amazon-cloudwatch  
+### ------
+##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/fluentd/fluentd.yaml` 
+##echo "$template" | kubectl delete -f - 
+### CW agent daemonset 
+##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-daemonset.yaml` 
+##echo "$template" | kubectl delete -f - 
+### CW agent configmap 
+##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-configmap.yaml` 
+##echo "$template" | kubectl delete -f - 
+### CW service account 
+##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-serviceaccount.yaml`  
+##echo "$template" | kubectl delete -f - 
+### CW namespace 
+##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cloudwatch-namespace.yaml`
+##echo "$template" | kubectl delete -f - 
+### CW IAM role for EC2 instances 
+##aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy  
+
+helm delete grafana --namespace grafana
+kubectl delete namespace grafana --ignore-not-found
+
+helm delete prometheus --namespace prometheus
+kubectl delete namespace prometheus --ignore-not-found
+
+kubectl delete service kubernetes-dashboard-external -n kubernetes-dashboard --ignore-not-found
+kubectl delete -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-beta8/aio/deploy/recommended.yaml
+
+# this script for some reason spits a couple of error messages at the end trying to delete 2 CRDs that it has deleted at the beginning
+if [[ ! -d "autoscaler" ]]; then git clone https://github.com/kubernetes/autoscaler.git; fi   
+./autoscaler/vertical-pod-autoscaler/hack/vpa-down.sh 
+
+kubectl delete -f ./configurations/cluster_autoscaler.yaml 
+
+template=`curl -sS https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/alb-ingress-controller.yaml | sed -e "s/# - --cluster-name=devCluster/- --cluster-name=$CLUSTER_NAME/g" -e "s/# - --aws-vpc-id=vpc-xxxxxx/- --aws-vpc-id=$VPC_ID/g" -e "s/# - --aws-region=us-west-1/- --aws-region=$AWS_REGION/g"`  
 echo "$template" | kubectl delete -f - 
-kubectl delete configmap cluster-info -n $NAMESPACE
-template=`cat "./fluentd.yml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"`
-echo "$template" | kubectl delete -f - 
+kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/rbac-role.yaml 
+eksctl delete iamserviceaccount --region $AWS_REGION --name alb-ingress-controller --namespace kube-system --cluster $CLUSTER_NAME
+sleep 5 
+aws iam delete-policy --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/ALBIngressControllerIAMPolicy
 
-/usr/local/bin/helm delete --purge grafana 
+#this order is not consistent with the setup order otherwise the kubectl delete throws an error (on the sa account not found)
+kubectl delete -k "github.com/kubernetes-sigs/aws-fsx-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
+eksctl delete iamserviceaccount --cluster $CLUSTER_NAME --region $REGION --name fsx-csi-controller-sa --namespace kube-system
+sleep 5
+aws iam delete-policy --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/Amazon_FSx_Lustre_CSI_Driver
 
-/usr/local/bin/helm delete --purge prometheus 
+kubectl delete -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
 
-template=`cat "./configurations/alb-ingress-controller.yaml" | sed -e "s/CLUSTERNAME/$CLUSTERNAME/g" -e "s/NAMESPACE/$NAMESPACE/g"`
-echo "$template" | kubectl delete -f -
-sleep 2
-template=`cat "configurations/alb-ingress-service-account.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"`
-echo "$template" | kubectl delete -f - 
-aws iam delete-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ALB-Ingress-Policy-For-Worker 
+aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/Amazon_EBS_CSI_Driver
+aws iam delete-policy --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/Amazon_EBS_CSI_Driver
+kubectl delete -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master"
 
-template=`curl https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml | sed -e "s/kube-system/$NAMESPACE/g"`
-echo "$template" | kubectl delete -f - 
-template=`curl https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/heapster.yaml | sed -e "s/kube-system/$NAMESPACE/g"`  
-echo "$template" | kubectl delete -f -
-template=`curl https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/influxdb.yaml | sed -e "s/kube-system/$NAMESPACE/g"` 
-echo "$template" | kubectl delete -f -
-template=`curl https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/rbac/heapster-rbac.yaml | sed -e "s/kube-system/$NAMESPACE/g"`  
-echo "$template" | kubectl delete -f -
-kubectl delete service kubernetes-dashboard-external -n $NAMESPACE
+OIDC_URL=$(aws eks describe-cluster --name $CLUSTER_NAME --output json | jq -r .cluster.identity.oidc.issuer | sed -e "s*https://**")
+aws iam delete-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::$ACCOUNT_ID:oidc-provider/$OIDC_URL
 
-/usr/local/bin/helm delete --purge metric-server
+helm delete metrics-server --namespace metrics-server
+kubectl delete namespace metrics-server
 
-template=`cat "./configurations/tiller-service-account.yaml" | sed "s/NAMESPACE/$NAMESPACE/g"`
-echo "$template" | kubectl delete -f -
-kubectl delete deployment tiller-deploy -n $NAMESPACE
-kubectl delete service tiller-deploy -n $NAMESPACE
-
-template=`curl https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.4/calico.yaml | sed -e "s/kube-system/$NAMESPACE/g"`
+template=`curl https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/release-1.6/config/v1.6/calico.yaml`
 echo "$template" | kubectl delete -f -
 
 template=`cat "./configurations/eks-admin-service-account.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"`
 echo "$template" | kubectl delete -f - 
+
+echo NAMESPACES: 
+kubectl get ns 
+echo
+echo ALL: 
+kubectl get all -A 
+echo 
+echo PVs:
+kubectl get pv 
+echo CRDs:
+kubectl get crd -A 
+echo SAs:
+kubectl get sa -A

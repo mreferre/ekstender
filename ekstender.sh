@@ -7,7 +7,7 @@
 ###########################################################
 # This script adds a set of tooling on top of a vanilla EKS cluster
 # This script is made available for demo and/or test purposes only
-# DO NOT USE THIS SCRIPT IN A PRODUCTION EKS CLUSTER 
+# DO NOT USE THIS SCRIPT WITH A PRODUCTION EKS CLUSTER 
 # If a cluster already exists, it is assumed your client environment is already pointing to it
 ###########################################################
 ###########            End of  README           ###########
@@ -17,15 +17,18 @@
 ###########              USER INPUTS            ###########
 ###########################################################
 : ${REGION:=$(aws configure get region)}
-: ${MESH_REGION:=${REGION}}
-: ${MINNODES:=2}  # the min number of nodes in the ASG
-: ${MAXNODES:=6}  # the max number of nodes in the ASG
+: ${AWS_REGION:=${REGION}} 
 : ${EXTERNALDASHBOARD:=yes}  
-: ${EXTERNALPROMETHEUS:=yes}  
+: ${EXTERNALPROMETHEUS:=no}  
 : ${DEMOAPP:=yes}  
-: ${KUBEFLOW:=no}
-: ${NAMESPACE:="kube-system"}
 : ${MESH_NAME:="ekstender-mesh"}
+: ${MESH_REGION:=${REGION}} 
+export REGION
+export AWS_REGION
+export EXTERNALDASHBOARD
+export EXTERNALPROMETHEUS
+export DEMOAPP
+export NAMESPACE
 export MESH_NAME
 export MESH_REGION
 ###########################################################
@@ -35,12 +38,19 @@ export MESH_REGION
 ###########################################################
 ###########    EXTRACTING REQUIRED PARAMETERS   ###########
 ###########################################################
-# scripts read $1 as clustername. If $1 is not used it defaults to eks1
-if [ -z "$1" ]; then "Please specify the cluster you want to EKStend!"; exit; else export CLUSTERNAME=$1; fi
-export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTERNAME --region $REGION  -o json | jq -r '.[].StackName')
-: ${NODE_INSTANCE_ROLE:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )}  # the IAM role assigned to the worker nodes
-: ${AUTOSCALINGGROUPNAME:=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeGroup") | .PhysicalResourceId')}  # the name of the ASG
-
+# ------------------
+figlet -k EKStender
+# ------------------
+echo "Gathering data about the cluster to EKStend..."
+echo 
+# scripts read $1 as clustername. If $1 is not used it exits
+if [ -z "$1" ]; then echo "Please specify the cluster name you want to EKStend!"; exit; else export CLUSTER_NAME=$1; fi
+if [ -z "$REGION" ]; then echo "Please configure the region in your CLI or export the variable REGION" & exit; fi
+export ACCOUNT_ID=$(aws sts get-caller-identity --output json | jq -r '.Account') # the AWS Account ID 
+export STACK_NAME=$(eksctl get nodegroup --cluster $CLUSTER_NAME --region $REGION  -o json | jq -r '.[].StackName')
+export NODE_INSTANCE_ROLE=$(aws cloudformation describe-stack-resources --region $REGION --stack-name $STACK_NAME | jq -r '.StackResources[] | select(.LogicalResourceId=="NodeInstanceRole") | .PhysicalResourceId' )  # the IAM role assigned to the worker nodes
+export CLUSTER_VERSION=$(aws eks describe-cluster --name $CLUSTER_NAME | jq --raw-output .cluster.version) # the major/minor version of the EKS cluster
+export VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME | jq --raw-output .cluster.resourcesVpcConfig.vpcId) # the VPC ID of the EKS cluster
 ###########################################################
 ## DO NOT TOUCH THESE UNLESS YOU KNOW WHAT YOU ARE DOING ##
 ###########################################################
@@ -80,6 +90,15 @@ logger() {
   echo -e "${TIME} -- ${MSG}" >> "${LOG_OUTPUT}"
 }
 
+banner()
+{
+  echo "+------------------------------------------+"
+  printf "| %-40s |\n" "`date`"
+  echo "|                                          |"
+  printf "|`tput bold` %-40s `tput sgr0`|\n" "$@"
+  echo "+------------------------------------------+"
+}
+
 errorcheck() {
    if [ $? != 0 ]; then
           logger "red" "Unrecoverable generic error found in function: [$1]. Check the log. Exiting."
@@ -92,165 +111,268 @@ welcome() {
   logger "red" "***  Do not run this on a production cluster  ***"
   logger "red" "*** This is solely for demo/learning purposes ***"
   logger "red" "*************************************************"
-  logger "green" "You are about to EKStend your EKS cluster"
   logger "green" "These are the environment settings that are going to be used:"
-  logger "yellow" "Cluster Name          : $CLUSTERNAME"
-  logger "yellow" "AWS Region            : $REGION"
-  logger "yellow" "Node Instance Role    : $NODE_INSTANCE_ROLE"
-  logger "yellow" "Kubernetes Namespace  : $NAMESPACE"
-  logger "yellow" "ASG Name              : $AUTOSCALINGGROUPNAME"
-  logger "yellow" "Min Number of Nodes   : $MINNODES"
-  logger "yellow" "Max Number of Nodes   : $MAXNODES"
-  logger "yellow" "External Dashboard    : $EXTERNALDASHBOARD"
+  logger "yellow" "Account ID            : $ACCOUNT_ID"
+  logger "yellow" "Cluster name          : $CLUSTER_NAME"
+  logger "yellow" "Cluster version       : $CLUSTER_VERSION"
+  logger "yellow" "AWS region            : $REGION"
+  logger "yellow" "Node instance role    : $NODE_INSTANCE_ROLE"
+  logger "yellow" "External dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
-  logger "yellow" "Mesh Name             : $MESH_NAME"
+  logger "yellow" "Mesh name             : $MESH_NAME"
   logger "yellow" "Demo application      : $DEMOAPP"
-  logger "yellow" "Kubeflow              : $KUBEFLOW"
-  logger "green" "Press [Enter] to continue or CTRL-C to abort..."
+  logger "green" "--------------------------------------------------------------"
+  logger "green" "You are about to EKStend your EKS cluster with the following add-ons"
+  logger "blue" "* A generic admin Service Account (eks-admin))"
+  logger "blue" "* Calico (network policy engine)"
+  logger "blue" "* Metrics server"
+  logger "blue" "* CSI EBS drivers"
+  logger "blue" "* CSI EFS drivers"
+  logger "blue" "* CSI FSx drivers"
+  logger "blue" "* ALB ingress controller"
+  logger "blue" "* Cluster autoscaler"
+  logger "blue" "* Vertical pod autoscaler"
+  logger "blue" "* Kubernetes dashboard"
+  logger "blue" "* Prometheus"
+  logger "blue" "* Grafana"
+  logger "blue" "* CloudWatch Container Insights"
+  logger "blue" "* AppMesh controller and sidecar injector"
+  logger "blue" "* Demo application (Yelb)"
+  logger "yellow" "Press [Enter] to continue or CTRL-C to abort..."
   read -p " "
 }
 
-preparenamespace() {
-  ns=`kubectl get namespace $NAMESPACE --output json | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
-  if [[ $ns = $NAMESPACE ]]; 
-      then logger "blue" "Namespace exists. Skipping..."; 
-      else kubectl create namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
-      logger "blue" "Namespace created...";
-  fi
-}
-
 admin_sa() {
+  banner "Administrator Service account"
   logger "green" "Creation of the generic eks-admin service account is starting..."
-  template=`cat "./configurations/eks-admin-service-account.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  template=`cat "./configurations/eks-admin-service-account.yaml"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   logger "green" "Creation of the generic eks-admin service account has completed..."
 }
 
+iam_oidc_provider() {
+  banner "OIDC provider"
+  logger "green" "Associating IAM OIDC provider..."
+  eksctl utils associate-iam-oidc-provider --region=$AWS_REGION --cluster $CLUSTER_NAME --approve >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  logger "green" "Association of the IAM OIDC provider has completed..."
+}
+
+helmrepos() {
+  banner "Helm repos"
+  logger "green" "Importing required Helm repos..."
+  helm repo add stable https://kubernetes-charts.storage.googleapis.com/ >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  helm repo add eks https://aws.github.io/eks-charts >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  helm repo update >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  logger "green" "Importing required Helm repos has completed..."
+}
+
 calico() {
+  banner "Calico"
   logger "green" "Calico setup is starting..."
   # source: https://docs.aws.amazon.com/eks/latest/userguide/calico.html 
-  template=`curl -sS https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/master/config/v1.4/calico.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  template=`curl -sS https://raw.githubusercontent.com/aws/amazon-vpc-cni-k8s/release-1.6/config/v1.6/calico.yaml` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
   logger "green" "Waiting for Calico pods to come up..."
-  #this would need a proper check instead of a sleep 
-  sleep 10
+  logger "green" "Waiting for the calico daemonset to come up on all nodes..."
+  calicodaemondesired=1 2>&1 
+  calicodaemonready=0 2>&1 
+  # This loops checks if the DESIRED count is equal to the ACTIVE count
+  while [[ $calicodaemondesired != $calicodaemonready ]]; do 
+      calicodaemon=`kubectl get ds calico-node -n kube-system | tail -n +2` >> "${LOG_OUTPUT}" 2>&1 
+      calicodaemondesired=`echo $calicodaemon | awk '{print $2}'` >> "${LOG_OUTPUT}" 2>&1 
+      calicodaemonready=`echo $calicodaemon | awk '{print $4}'` >> "${LOG_OUTPUT}" 2>&1 
+      echo "waiting for the calico daemon to start on all nodes ($calicodaemondesire/$calicodaemonready)" >> "${LOG_OUTPUT}" 2>&1 
+      sleep 1; 
+  done 
   logger "green" "Calico has been installed properly!"
 }
 
-tiller() {
-  logger "green" "Helm setup is starting..."
-  curl -o get_helm.sh https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get >> "${LOG_OUTPUT}" 2>&1 
-  chmod +x get_helm.sh >> "${LOG_OUTPUT}" 2>&1 
-  ./get_helm.sh >> "${LOG_OUTPUT}" 2>&1 
-  template=`cat "./configurations/tiller-service-account.yaml" | sed "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
-  errorcheck ${FUNCNAME}
-  /usr/local/bin/helm init --service-account tiller --tiller-namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  # we apparently need to sync the helm client and server (reference: https://github.com/helm/charts/issues/5239)
-  # wonder what the ramifications of a complex production setup may be
-  /usr/local/bin/helm init --upgrade >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  logger "green" "Waiting for the tiller pod to come up..."
-  tillerpodline=`kubectl get pod -A | grep tiller` >> "${LOG_OUTPUT}" 2>&1 
-  tillerpod=`echo $tillerpodline | awk '{print $2}'` >> "${LOG_OUTPUT}" 2>&1 
-  while [[ $(kubectl get pods -n $NAMESPACE $tillerpod -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}') != "True" ]]; do echo "waiting for $tillerpod pod" && sleep 1; done >> "${LOG_OUTPUT}" 2>&1 
-  logger "green" "Tiller has been installed properly!"
-}
-
-metricserver() {
-  logger "green" "Metric server deployment is starting..."
-  echo "Updating Helm repo" >> "${LOG_OUTPUT}" 2>&1
-  /usr/local/bin/helm repo update >> "${LOG_OUTPUT}" 2>&1 
-  chart=`/usr/local/bin/helm list metric-server --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
-  if [[ $chart = "metric-server" ]]; 
-      then logger "blue" "Metric server is already installed. Skipping..."; 
-      else /usr/local/bin/helm install stable/metrics-server --name metric-server --version 2.0.4 --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ;
+metrics-server() {
+  banner "Metrics server"
+  logger "green" "Metrics server deployment is starting..."
+  # source: https://eksworkshop.com/scaling/deploy_hpa/ & https://docs.aws.amazon.com/eks/latest/userguide/metrics-server.html 
+  ns=`kubectl get namespace metrics-server --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = metrics-server ]]; 
+      then logger "blue" "metrics-server namespace exists. Skipping..."; 
+      else kubectl create namespace metrics-server >> "${LOG_OUTPUT}" 2>&1
+      logger "blue" "metrics-server namespace created...";
+  fi  
+  CHART=`helm list --namespace metrics-server --filter 'metrics-server' --output json | jq --raw-output .[0].name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CHART = "metrics-server" ]]; 
+      then logger "blue" "Metrics server is already installed. Skipping..."; 
+      else helm install metrics-server stable/metrics-server --version 2.11.1 --namespace metrics-server  >> "${LOG_OUTPUT}" 2>&1 ;
   fi
   errorcheck ${FUNCNAME}
   logger "green" "Metric server has been installed properly!"
 }
 
-dashboard() {
-  logger "green" "Dashboard setup is starting..."
-  # source: https://docs.aws.amazon.com/eks/latest/userguide/dashboard-tutorial.html
-  template=`curl -sS https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+csiebs() {
+  banner "CSI EBS Driver"
+  logger "green" "EBS CSI support deployment is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html
+  curl -o configurations/ebs-iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-ebs-csi-driver/v0.4.0/docs/example-iam-policy.json >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
+  AMAZON_EBS_CSI_DRIVER_POLICY_ARN=$(aws iam list-policies --region $REGION | jq -r '.Policies[] | select(.PolicyName=="Amazon_EBS_CSI_Driver") | .Arn')
+  if [[ $AMAZON_EBS_CSI_DRIVER_POLICY_ARN = "arn:aws:iam::$ACCOUNT_ID:policy/Amazon_EBS_CSI_Driver" ]]; 
+      then logger "blue" "Amazon_EBS_CSI_Driver exists already. Skipping..."; 
+      else aws iam create-policy --policy-name Amazon_EBS_CSI_Driver --policy-document file://./configurations/ebs-iam-policy.json >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME};
+  fi 
+  aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/Amazon_EBS_CSI_Driver >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/heapster.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  kubectl apply -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master" >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
+  logger "green" "EBS CSI support has been installed properly!"
+}
+
+csiefs() {
+  banner "CSI EFS Driver"
+  logger "green" "EFS CSI support deployment is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/efs-csi.html
+  kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master" >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/influxdb/influxdb.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
-  errorcheck ${FUNCNAME}  
-  template=`curl -sS https://raw.githubusercontent.com/kubernetes/heapster/master/deploy/kube-config/rbac/heapster-rbac.yaml | sed -e "s/kube-system/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1  
-  errorcheck ${FUNCNAME}    
-  if [[ $EXTERNALDASHBOARD = "yes" ]]; 
-      then kubectl get service kubernetes-dashboard-external -n $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
-           if [[ $? = 0 ]];
-                then logger "blue" "The Kubernetes dashboard is already exposed to the Internet. Skipping...";
-                else kubectl expose deployment kubernetes-dashboard --type=LoadBalancer --name=kubernetes-dashboard-external -n $NAMESPACE >> "${LOG_OUTPUT}" 2>&1 ; 
-                     errorcheck ${FUNCNAME}
-                     logger "blue" "Warning: I am exposing the Kubernetes dashboard to the Internet...";
-           fi;
-      else logger "blue" "The Kubernetes dashboard is not being exposed to the Internet......";
-  fi
-  # If you opted not expose the dashboard via the ELB, start the proxy like this: kubectl proxy --port=8080 --accept-hosts="^*$" 
-  # and connect to: http://localhost:8080/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/#!/login
-  # grab the token: kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep eks-admin | awk '{print $1}')
-  logger "green" "Dashboard has been installed properly!"
+  logger "green" "EFS CSI support has been installed properly!"
+}
+
+csifsx() {
+  # https://docs.aws.amazon.com/eks/latest/userguide/fsx-csi.html
+  banner "CSI FSx Driver"
+  logger "green" "FSx CSI support deployment is starting..."
+  AMAZON_FSX_LUSTRE_CSI_DRIVER_POLICY_ARN=$(aws iam list-policies --region $REGION | jq -r '.Policies[] | select(.PolicyName=="Amazon_FSx_Lustre_CSI_Driver") | .Arn')
+  if [[ $AMAZON_FSX_LUSTRE_CSI_DRIVER_POLICY_ARN = "arn:aws:iam::$ACCOUNT_ID:policy/Amazon_FSx_Lustre_CSI_Driver" ]]; 
+      then logger "blue" "The Amazon_FSx_Lustre_CSI_Driver IAM policy exists already. Skipping..."; 
+      # A configuration policy file is required because one is not available on GH (the policy file is only available in the docs)
+      # Also AWS CLI v2 doesn't support pointint to an URL to grab a file (to check)
+      else aws iam create-policy --policy-name Amazon_FSx_Lustre_CSI_Driver --policy-document file://./configurations/fsx-csi-driver.json >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME};
+  fi 
+  eksctl create iamserviceaccount --region $REGION --name fsx-csi-controller-sa --namespace kube-system --cluster $CLUSTER_NAME --attach-policy-arn arn:aws:iam::$ACCOUNT_ID:policy/Amazon_FSx_Lustre_CSI_Driver --approve >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME} 
+  kubectl apply -k "github.com/kubernetes-sigs/aws-fsx-csi-driver/deploy/kubernetes/overlays/stable/?ref=master" >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME} 
+  logger "green" "FSx CSI support has been installed properly!"
 }
 
 albingresscontroller() {
+  banner "ALB ingress controller"
   logger "green" "ALB Ingress controller setup is starting..."
-  # source: https://kubernetes-sigs.github.io/aws-alb-ingress-controller/guide/controller/setup/ 
-  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ALB-Ingress-Policy-For-Worker --policy-document file://./configurations/alb-ingress-policy.json >> "${LOG_OUTPUT}" 2>&1 
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html
+  ALB_INGRESS_CONTROLLER_POLICY_ARN=$(aws iam list-policies --region $REGION | jq -r '.Policies[] | select(.PolicyName=="ALBIngressControllerIAMPolicy") | .Arn')
+  if [[ $ALB_INGRESS_CONTROLLER_POLICY_ARN = "arn:aws:iam::$ACCOUNT_ID:policy/ALBIngressControllerIAMPolicy" ]]; 
+      then logger "blue" "The ALBIngressControllerIAMPolicy IAM policy exists already. Skipping..."; 
+      # AWS CLI v2 doesn't support pointint to an URL to grab a file (to check)
+      else curl -o configurations/alb-ingress-iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/iam-policy.json >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME}
+           aws iam create-policy --policy-name ALBIngressControllerIAMPolicy --policy-document file://./configurations/alb-ingress-iam-policy.json --output json >> "${LOG_OUTPUT}" 2>&1 
+           errorcheck ${FUNCNAME};
+  fi 
+  eksctl create iamserviceaccount --region $REGION --name alb-ingress-controller --namespace kube-system --cluster $CLUSTER_NAME --attach-policy-arn arn:aws:iam::$ACCOUNT_ID:policy/ALBIngressControllerIAMPolicy --approve >> "${LOG_OUTPUT}" 2>&1  
   errorcheck ${FUNCNAME}
-  template=`cat "configurations/alb-ingress-service-account.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/rbac-role.yaml >> "${LOG_OUTPUT}" 2>&1  
+  errorcheck ${FUNCNAME}
+  template=`curl -sS https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/alb-ingress-controller.yaml | sed -e "s/# - --cluster-name=devCluster/- --cluster-name=$CLUSTER_NAME/g" -e "s/# - --aws-vpc-id=vpc-xxxxxx/- --aws-vpc-id=$VPC_ID/g" -e "s/# - --aws-region=us-west-1/- --aws-region=$AWS_REGION/g"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  template=`cat "./configurations/alb-ingress-controller.yaml" | sed -e "s/CLUSTERNAME/$CLUSTERNAME/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  sleep 15
-  # background: https://github.com/pahud/eks-alb-ingress 
   logger "green" "ALB Ingress controller has been installed properly!"
 }
 
+clusterautoscaler() {
+  banner "Kubernetes cluster autoscaler (CA)"
+  logger "green" "Cluster autoscaler (CA) deployment is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/cluster-autoscaler.html
+  # the iam policy ASG-Policy-For-Worker could be redundant if the cluster is installed with eksctl and the --asg-access flag 
+  # aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ASG-Policy-For-Worker --policy-document file://./configurations/k8s-asg-policy.json >> "${LOG_OUTPUT}" 2>&1 
+  if [[ $CLUSTER_VERSION = 1.12 ]]; then CA_IMAGE="k8s.gcr.io/cluster-autoscaler:v1.12.8"; fi >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CLUSTER_VERSION = 1.13 ]]; then CA_IMAGE="k8s.gcr.io/cluster-autoscaler:v1.13.9"; fi >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CLUSTER_VERSION = 1.14 ]]; then CA_IMAGE="k8s.gcr.io/cluster-autoscaler:v1.14.8"; fi >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CLUSTER_VERSION = 1.15 ]]; then CA_IMAGE="us.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:v1.15.6"; fi >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CLUSTER_VERSION = 1.16 ]]; then CA_IMAGE="us.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:v1.16.5"; fi >> "${LOG_OUTPUT}" 2>&1
+  template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/<YOUR CLUSTER NAME>/$CLUSTER_NAME/g" -e "s*<CA IMAGE>*$CA_IMAGE*g"` >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  kubectl -n kube-system annotate deployment.apps/cluster-autoscaler cluster-autoscaler.kubernetes.io/safe-to-evict="false" --overwrite >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  logger "green" "Cluster Autoscaler has been installed properly!"
+}
+
+verticalpodautoscaler() {
+  banner "Vertical pod autoscaler (VPA)"
+  logger "green" "Vertical pod autoscaler (VPA) deployment is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/vertical-pod-autoscaler.html
+  VPA_ADMISSION_CONTROLLER=$(kubectl get deployment vpa-admission-controller -n kube-system --ignore-not-found | tail -n +2 | awk '{print $1}')
+  if [[ $VPA_ADMISSION_CONTROLLER != "vpa-admission-controller" ]];
+    then 
+      if [[ ! -d "autoscaler" ]]
+        then git clone https://github.com/kubernetes/autoscaler.git >> "${LOG_OUTPUT}" 2>&1
+         errorcheck ${FUNCNAME}
+        else logger "blue" "The autoscaler repo already exists. Skipping the cloning..."
+      fi   
+      errorcheck ${FUNCNAME}
+      ./autoscaler/vertical-pod-autoscaler/hack/vpa-up.sh >> "${LOG_OUTPUT}" 2>&1
+      errorcheck ${FUNCNAME};
+    else logger "blue" "The autoscaler pods seem to be deployed already. Skipping the installation..."
+  fi
+  logger "green" "Vertical pod autoscaler (VPA) installed properly!"
+}
+
+dashboard() {
+  banner "Kubernetes dashboard"
+  logger "green" "The Kubernetes dashboard setup is starting..."
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/dashboard-tutorial.html
+  DASHBOARD=$(kubectl get deployment kubernetes-dashboard -n kubernetes-dashboard --ignore-not-found | tail -n +2 | awk '{print $1}')  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $DASHBOARD = "kubernetes-dashboard" ]] 
+      then logger "blue" "The Kubernetes dashboard is already installed. Skipping..." 
+      else kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-beta8/aio/deploy/recommended.yaml >> "${LOG_OUTPUT}" 2>&1 
+           errorcheck ${FUNCNAME}
+           if [[ $EXTERNALDASHBOARD = "yes" ]] 
+               then kubectl expose deployment kubernetes-dashboard --type=LoadBalancer --name=kubernetes-dashboard-external -n kubernetes-dashboard >> "${LOG_OUTPUT}" 2>&1 
+                    errorcheck ${FUNCNAME}
+                    logger "blue" "Warning: I am exposing the Kubernetes dashboard to the Internet..."
+               else logger "blue" "The Kubernetes dashboard is not being exposed to the Internet......"
+          fi
+  fi
+  # If you opted not expose the dashboard via the CLB, start the proxy like this: kubectl proxy 
+  # and connect to: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#!/login
+  # (If you are using Cloud 9 do this: kubectl proxy --port=8080 --accept-hosts="^*$"  - and connect to: http://localhost:8080/api/v1/......) 
+  # If you opted to expose the dashboard via the CLB, connect to https://<elb-fqdn>:8443
+  #HOW TO GET A TOKEN
+  # grab the token: kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep eks-admin | awk '{print $1}')
+  logger "green" "The Kubernetes dashboard has been installed properly!"
+}
+
 prometheus() {
+  banner "Prometheus"
   logger "green" "Prometheus setup is starting..."
-  #template=`cat "./configurations/prometheus-storageclass.yaml" | sed -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
-  #errorcheck ${FUNCNAME}
-  #echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  #errorcheck ${FUNCNAME}
-  chart=`/usr/local/bin/helm list prometheus --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
-  if [[ $chart = "prometheus" ]]; 
+  # source: https://docs.aws.amazon.com/eks/latest/userguide/prometheus.html 
+  ns=`kubectl get namespace prometheus --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = prometheus ]]; 
+      then logger "blue" "Namespace exists. Skipping..."; 
+      else kubectl create namespace prometheus >> "${LOG_OUTPUT}" 2>&1
+      logger "blue" "Namespace created...";
+  fi
+  CHART=`helm list --namespace prometheus --filter 'prometheus' --output json | jq --raw-output .[0].name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CHART = "prometheus" ]]; 
       then logger "blue" "Prometheus is already installed. Skipping..."; 
       else if [[ $EXTERNALPROMETHEUS = "yes" ]]; 
-                then /usr/local/bin/helm install stable/prometheus \
-                                      --name prometheus \
-                                      --namespace $NAMESPACE \
+                then helm install prometheus stable/prometheus \
+                                      --namespace prometheus \
                                       --set alertmanager.persistentVolume.storageClass="gp2" \
-                                      --set server.persistentVolume.storageClass="gp2" \
                                       --set server.service.type=LoadBalancer >> "${LOG_OUTPUT}" 2>&1 
                     errorcheck ${FUNCNAME}
                     logger "blue" "Prometheus is being exposed to the Internet......";
-                else /usr/local/bin/helm install stable/prometheus \
-                                      --name prometheus \
-                                      --namespace $NAMESPACE \
-                                      --set alertmanager.persistentVolume.storageClass="gp2" \
-                                      --set server.persistentVolume.storageClass="gp2" >> "${LOG_OUTPUT}" 2>&1 
+                else helm install prometheus stable/prometheus \
+                                      --namespace prometheus \
+                                      --set alertmanager.persistentVolume.storageClass="gp2" >> "${LOG_OUTPUT}" 2>&1
                       errorcheck ${FUNCNAME}
                       logger "blue" "Prometheus is not being exposed to the Internet......";
            fi   
@@ -260,201 +382,177 @@ prometheus() {
 }
 
 grafana() {
+  banner "Grafana"
   logger "green" "Grafana setup is starting..."
-  chart=`/usr/local/bin/helm list grafana --output json | jq --raw-output .Releases[0].Name`  >> "${LOG_OUTPUT}" 2>&1
-  if [[ $chart = "grafana" ]]; 
+  # source: https://eksworkshop.com/intermediate/240_monitoring/deploy-grafana/
+  ns=`kubectl get namespace grafana --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = grafana ]]; 
+      then logger "blue" "Namespace exists. Skipping..."; 
+      else kubectl create namespace grafana >> "${LOG_OUTPUT}" 2>&1
+      logger "blue" "Namespace created...";
+  fi  
+  CHART=`helm list --namespace grafana --filter 'grafana' --output json | jq --raw-output .[0].name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CHART = "grafana" ]]; 
       then logger "blue" "Grafana is already installed. Skipping..."; 
-      else # /usr/local/bin/helm install -f configurations/grafana-values.yaml stable/grafana --name grafana --namespace $NAMESPACE >> "${LOG_OUTPUT}" 2>&1
-          /usr/local/bin/helm install stable/grafana \
-            --name grafana \
-            --namespace $NAMESPACE \
+      else helm install grafana stable/grafana \
+            --namespace grafana \
             --set persistence.storageClassName="gp2" \
+            --set persistence.enabled=true \
             --set adminPassword="EKS!sAWSome" \
             --set datasources."datasources\.yaml".apiVersion=1 \
             --set datasources."datasources\.yaml".datasources[0].name=Prometheus \
             --set datasources."datasources\.yaml".datasources[0].type=prometheus \
-            --set datasources."datasources\.yaml".datasources[0].url=http://prometheus-server.$NAMESPACE.svc.cluster.local \
+            --set datasources."datasources\.yaml".datasources[0].url=http://prometheus-server.prometheus.svc.cluster.local \
             --set datasources."datasources\.yaml".datasources[0].access=proxy \
             --set datasources."datasources\.yaml".datasources[0].isDefault=true \
             --set service.type=LoadBalancer >> "${LOG_OUTPUT}" 2>&1 ;
   fi
-  errorcheck ${FUNCNAME}
   logger "green" "Grafana has been installed properly!"
 }
 
 cloudwatchcontainerinsights() {
+  banner "CloudWatch Container Insights"
   logger "green" "CloudWatch Containers Insights setup is starting..."
+  # CW IAM role for EC2 instances 
   aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-serviceaccount.yaml >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  template=`cat "./cwagent-serviceaccount.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-configmap.yaml >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  template=`cat "./cwagent-configmap.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g" -e "s/{{cluster_name}}/$CLUSTERNAME/g"` >> "${LOG_OUTPUT}" 2>&1
+  # CW namespace 
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cloudwatch-namespace.yaml`
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME} 
-  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/kubernetes-monitoring/cwagent-daemonset.yaml >> "${LOG_OUTPUT}" 2>&1 
+  errorcheck ${FUNCNAME}  
+  # CW service account 
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-serviceaccount.yaml` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`cat "./cwagent-daemonset.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}  
+  # CW agent configmap 
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-configmap.yaml | sed -e "s/{{cluster_name}}/$CLUSTER_NAME/g"` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
+  # CW agent daemonset 
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-daemonset.yaml` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
+  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME} 
+  # CW Fluentd 
   # ------
-  clusterinfo=`kubectl get configmap cluster-info -n $NAMESPACE --output json --ignore-not-found | jq --raw-output .metadata.name` >> "${LOG_OUTPUT}" 2>&1
+  clusterinfo=`kubectl get configmap cluster-info -n amazon-cloudwatch --output json --ignore-not-found | jq --raw-output .metadata.name` >> "${LOG_OUTPUT}" 2>&1
   if [[ $clusterinfo = "cluster-info" ]]; 
       then logger "blue" "The cluster-info configmap is already there. Skipping..."; 
-      else kubectl create configmap cluster-info --from-literal=cluster.name=$CLUSTERNAME --from-literal=logs.region=$REGION -n $NAMESPACE  >> "${LOG_OUTPUT}" 2>&1 ;
+      else kubectl create configmap cluster-info --from-literal=cluster.name=$CLUSTER_NAME --from-literal=logs.region=$REGION -n amazon-cloudwatch  >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME}
   fi
-  errorcheck ${FUNCNAME}
-  curl -O https://s3.amazonaws.com/cloudwatch-agent-k8s-yamls/fluentd/fluentd.yml >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  template=`cat "./fluentd.yml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
+  # ------
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/fluentd/fluentd.yaml` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME} 
-  # Add CloudWatch Agent with Prometheus Metrics Collection
-  curl -O https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  template=`cat "./prometheus-eks.yaml" | sed -e "s/amazon-cloudwatch/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1
+  # WARNING - the following section setup the beta for the new Prometheus metrics collection feature - it's a super set of all constructs above 
+  # CW Prometheus metrics collection
+  template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
+  errorcheck ${FUNCNAME} 
   logger "green" "CloudWatch Containers Insights has been installed properly!"
 }
 
-clusterautoscaler() {
-  logger "green" "Cluster Autoscaler deployment is starting..."
-  # the iam policy ASG-Policy-For-Worker may be redundant if the cluster is installed with eksctl and the --asg-access flag 
-  aws iam put-role-policy --role-name $NODE_INSTANCE_ROLE --policy-name ASG-Policy-For-Worker --policy-document file://./configurations/k8s-asg-policy.json >> "${LOG_OUTPUT}" 2>&1 
-  template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/AUTOSCALINGGROUPNAME/$AUTOSCALINGGROUPNAME/g" -e "s/MINNODES/$MINNODES/g" -e "s/MAXNODES/$MAXNODES/g" -e "s/AWSREGION/$REGION/g" -e "s/NAMESPACE/$NAMESPACE/g"` >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  logger "green" "Cluster Autoscaler has been installed properly!"
-}
 
 appmesh() {
+  banner "App Mesh"
   logger "green" "Appmesh components setup is starting..."
-  # https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html
-  curl -o ./configurations/appmeshall.yaml https://raw.githubusercontent.com/aws/aws-app-mesh-controller-for-k8s/master/deploy/all.yaml  >> "${LOG_OUTPUT}" 2>&1 
+  # https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html 
+  kubectl apply -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  aws iam attach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/AWSAppMeshFullAccess >> "${LOG_OUTPUT}" 2>&1 
+  ns=`kubectl get namespace appmesh-system --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = appmesh-system ]]; 
+      then logger "blue" "Namespace exists. Skipping..."
+      else kubectl create ns appmesh-system >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME}
+           logger "blue" "Namespace created...";
+  fi 
+  eksctl create iamserviceaccount --cluster $CLUSTER_NAME --namespace appmesh-system --name appmesh-controller --attach-policy-arn  arn:aws:iam::aws:policy/AWSCloudMapFullAccess,arn:aws:iam::aws:policy/AWSAppMeshFullAccess --override-existing-serviceaccounts --approve >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  template=`cat "./configurations/appmeshall.yaml"` >> "${LOG_OUTPUT}" 2>&1   
+  helm upgrade -i appmesh-controller eks/appmesh-controller --namespace appmesh-system --set region=$AWS_REGION --set serviceAccount.create=false --set serviceAccount.name=appmesh-controller >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
+  APP_MESH_CONTROLLER_VERSION=$(kubectl get deployment -n appmesh-system appmesh-controller -o json  | jq -r ".spec.template.spec.containers[].image" | cut -f2 -d ':')  >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
-  curl -o install.sh https://raw.githubusercontent.com/aws/aws-app-mesh-inject/master/scripts/install.sh >> "${LOG_OUTPUT}" 2>&1
+  echo "The AppMesh controller version is: " $APP_MESH_CONTROLLER_VERSION >> "${LOG_OUTPUT}" 2>&1 
+  helm upgrade -i appmesh-inject eks/appmesh-inject --namespace appmesh-system --set mesh.name=$MESH_NAME --set mesh.create=true >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "The mesh name is: " $MESH_NAME >> "${LOG_OUTPUT}" 2>&1
-  chmod +x install.sh  >> "${LOG_OUTPUT}" 2>&1
-  ./install.sh  >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  # for now I am enabling only the default namespace to inject the sidecar automatically
-  # given the default namespace I am deploying to (and the only one that works today) is 'kube-system' I don't want to enable that label there 
+  # for now only the default namespace is enabled to inject the sidecar automatically
   kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook=enabled --overwrite >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Appmesh components have been installed properly"
 }
 
 demoapp() {
+  banner "Yelb demo application"
   logger "green" "Demo application setup is starting..."
-  if [ ! -d yelb ]; then git clone https://github.com/mreferre/yelb >> "${LOG_OUTPUT}" 2>&1
-  fi 
-  errorcheck ${FUNCNAME}
-  kubectl apply -f ./yelb/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb.yaml --namespace=$NAMESPACE >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  # without the following sleep a potential race condition creating the demo app ingress and the kubeflow ingress (below) is noticed
-  # this sleep may be possibly reduced but this would require further investigation and a potentially more elegant solution   
-  sleep 120 
+  YELB_UI=$(kubectl get deployment yelb-ui -n default --ignore-not-found | tail -n +2 | awk '{print $1}')
+  if [[ $YELB_UI != "yelb-ui" ]];
+    then kubectl apply -n default -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb-ip.yaml >> "${LOG_OUTPUT}" 2>&1
+         errorcheck ${FUNCNAME};
+         sleep 60 
+    else logger "blue" "The demo app is already installed. Skipping the setup..."
+  fi
   logger "green" "Demo application has been installed properly!"
 }
 
-kubeflow () {
-  logger "green" "Kubeflow setup is starting..."
-  if [ ! -d kubeflow-aws ]; then 
-    mkdir ./kubeflow-aws >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    cd kubeflow-aws >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    export KUBEFLOW_SRC=$(pwd)
-    export KUBEFLOW_TAG=v0.5-branch
-    curl -sS https://raw.githubusercontent.com/kubeflow/kubeflow/${KUBEFLOW_TAG}/scripts/download.sh | bash >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    export KFAPP=kfapp
-    cd ${KUBEFLOW_SRC} >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    ${KUBEFLOW_SRC}/scripts/kfctl.sh init ${KFAPP} --platform aws \
-    --awsClusterName ${CLUSTERNAME} \
-    --awsRegion ${REGION} \
-    --awsNodegroupRoleNames ${NODE_INSTANCE_ROLE} >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    cd ${KFAPP} >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    ${KUBEFLOW_SRC}/scripts/kfctl.sh generate platform  >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    ${KUBEFLOW_SRC}/scripts/kfctl.sh apply platform >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    ${KUBEFLOW_SRC}/scripts/kfctl.sh generate k8s >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    ${KUBEFLOW_SRC}/scripts/kfctl.sh apply k8s >> "${LOG_OUTPUT}" 2>&1
-    errorcheck ${FUNCNAME}
-    cd ../..
-    sleep 120 
-    logger "green" "Kubeflow has been installed properly!";
-    else logger "blue" "Kubeflow seems to be already installed. Skipping..."; 
-    fi;
-}
-
 congratulations() {
-  logger "yellow" "Almost there..."
+  banner "Congratulations!"
+  logger "green" "Your cluster has been EKStended! Almost there..."
   # instead of the sleep below a selective poll should be created that waits till the endpoints are available.  
-  sleep 40
-  GRAFANAELB=`kubectl get service grafana -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  sleep 30
+  GRAFANAELB=`kubectl get service grafana -n grafana --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}  
-  PROMETHEUSELB=`kubectl get service prometheus-server -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  PROMETHEUSELB=`kubectl get service prometheus-server -n prometheus --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  DASHBOARDELB=`kubectl get service kubernetes-dashboard-external -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  DASHBOARDELB=`kubectl get service kubernetes-dashboard-external -n kubernetes-dashboard --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
-  if [[ $DEMOAPP = "yes" ]]; then DEMOAPPALBURL=`kubectl get ingress yelb-ui -n $NAMESPACE --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname`; fi >> "${LOG_OUTPUT}" 2>&1
-  errorcheck ${FUNCNAME}
-  if [[ $KUBEFLOW = "yes" ]]; then KUBEFLOWALBURL=`kubectl get ingress -n istio-system --output json | jq --raw-output .items[0].status.loadBalancer.ingress[0].hostname`; fi >> "${LOG_OUTPUT}" 2>&1
+  DEMOAPPALBURL=`kubectl get ingress yelb-ui -n default --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
   logger "green" "Your EKStended kubernetes environment is ready to be used"
   logger "green" "------"
-  logger "yellow" "Grafana UI           : http://"$GRAFANAELB 
-  logger "yellow" "Prometheus UI        : http://"$PROMETHEUSELB
-  logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB":8443" 
-  logger "yellow" "Demo application     : http://"$DEMOAPPALBURL
-  logger "yellow" "Kubeflow             : http://"$KUBEFLOWALBURL
+  if [ ! "$GRAFANAELB" = null ]
+    then logger "yellow" "Grafana UI           : http://"$GRAFANAELB:80
+  fi 
+  if [ ! "$PROMETHEUSELB" = null ]
+    then logger "yellow" "Prometheus UI        : http://"$PROMETHEUSELB
+  fi
+  if [ ! "$DASHBOARDELB" = null ] 
+    then logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB:8443 
+  fi
+  if [ ! "$DASHBOARDELB" = null ] 
+    then logger "yellow" "Demo application     : http://"$DEMOAPPALBURL:80 
+  fi
   logger "green" "------"
   logger "green" "Note that it may take several minutes for these end-points to be fully operational"
-  logger "green" "If you see a <null> or no value you specifically opted out for that particular feature or the LB isn't ready yet (check with kubectl)"
   logger "green" "Enjoy!"
 }
 
 main() {
   welcome
-  preparenamespace
-  admin_sa
-  calico
-  tiller
-  metricserver
-  dashboard
-  albingresscontroller
-  prometheus
-  grafana 
-  cloudwatchcontainerinsights
-  clusterautoscaler
-  appmesh
-  if [[ $DEMOAPP = "yes" ]]; then demoapp; fi;
-  if [[ $KUBEFLOW = "yes" ]]; then kubeflow; fi;
+  admin_sa #ns = kube-system
+  iam_oidc_provider #ns = not applicable
+  helmrepos #ns = not applicable
+  calico #ns = kube-system
+  metrics-server #ns = metrics-server
+  csiebs #ns = kube-system
+  csiefs #ns = kube-system
+  csifsx #ns = kube-system
+  albingresscontroller #ns = kube-system
+  clusterautoscaler #ns = clusterautoscaler  
+  verticalpodautoscaler #ns = kube-system  
+  dashboard #ns = kube-system
+  prometheus #ns = prometheus
+  grafana #ns = grafana
+  cloudwatchcontainerinsights #ns = amazon-cloudwatch
+  appmesh #ns = appmesh-system
+  demoapp #ns = default 
   congratulations
 }
 
