@@ -63,7 +63,7 @@ echo "$template" | kubectl delete -f -
 ### CW namespace 
 ##template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cloudwatch-namespace.yaml`
 ##echo "$template" | kubectl delete -f - 
-CW IAM role for EC2 instances 
+#CW IAM role for EC2 instances 
 aws iam detach-role-policy --role-name $NODE_INSTANCE_ROLE --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy  
 
 helm delete grafana --namespace grafana
