@@ -21,6 +21,7 @@
 : ${EXTERNALDASHBOARD:=yes}  
 : ${EXTERNALPROMETHEUS:=no}  
 : ${DEMOAPP:=yes}  
+: ${CALICO:=no}  
 : ${MESH_NAME:="ekstender-mesh"}
 : ${MESH_REGION:=${REGION}} 
 export REGION
@@ -121,6 +122,7 @@ welcome() {
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
   logger "yellow" "Mesh name             : $MESH_NAME"
   logger "yellow" "Demo application      : $DEMOAPP"
+  logger "yellow" "Calico                : $CALICO"
   logger "green" "--------------------------------------------------------------"
   logger "green" "You are about to EKStend your EKS cluster with the following add-ons"
   logger "blue" "* A generic admin Service Account (eks-admin))"
@@ -526,7 +528,7 @@ congratulations() {
   if [ ! "$DASHBOARDELB" = null ] 
     then logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB:8443 
   fi
-  if [ ! "$DASHBOARDELB" = null ] 
+  if [ ! "$DEMOAPPALBURL" = null ] 
     then logger "yellow" "Demo application     : http://"$DEMOAPPALBURL:80 
   fi
   logger "green" "------"
@@ -539,7 +541,7 @@ main() {
   admin_sa #ns = kube-system
   iam_oidc_provider #ns = not applicable
   helmrepos #ns = not applicable
-  calico #ns = kube-system
+  if [[ $CALICO = "yes" ]]; then calico; fi; #ns = kube-system
   metrics-server #ns = metrics-server
   csiebs #ns = kube-system
   csiefs #ns = kube-system
@@ -552,7 +554,7 @@ main() {
   grafana #ns = grafana
   cloudwatchcontainerinsights #ns = amazon-cloudwatch
   appmesh #ns = appmesh-system
-  demoapp #ns = default 
+  if [[ $DEMOAPP = "yes" ]]; then demoapp; fi; #ns = default 
   congratulations
 }
 

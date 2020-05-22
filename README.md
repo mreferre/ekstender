@@ -20,9 +20,9 @@ While you can make it work with a regular upstream K8s setup, `EKStender` was on
 
 #### What stack does EKStender deploy?
 
-This is a list of modules, features and configurations that `EKStender` enables on a vanilla EKS cluster (deployed with eksctl):
+This is a list of modules, features and configurations that `EKStender` can enable on a vanilla EKS cluster (deployed with eksctl):
 
-- Calico (network policy engine)
+- Calico 
 - Metrics server
 - CSI EBS drivers
 - CSI EFS drivers
@@ -37,7 +37,7 @@ This is a list of modules, features and configurations that `EKStender` enables 
 - AppMesh controller and sidecar injector
 - Demo application ([Yelb](https://github.com/mreferre/yelb))
 
-In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. 
+In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. Note also that some of these add-ons can be enabled/disabled. Look at the `USER INPUTS` section of the `ekstender.sh` script to check for what is enabled and what not. In addition, when you launch the script a summary will show what it will install.
 
 The following picture shows a graphical representation of the outcome of running `EKStender`
 
@@ -106,5 +106,6 @@ eksctl delete cluster --name eks1
 #### Known issues and limitations
 
 - EKS/Fargate is not supported.
-- Only one single nodegroup per cluster is supported. 
+- Only one single node group per cluster is supported.
+- If you enabled Calico (by default it is not enabled) the cleanup script will not delete the iptables on the nodes. Either follow [these steps](https://github.com/projectcalico/calico/blob/master/hack/remove-calico-policy/remove-policy.md) or re-deploy the node group (or kill the instances and let ASG re-deploy them).  
 
