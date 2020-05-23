@@ -85,7 +85,7 @@ The script is designed to be idempotent.
 
 This is an example of what the setup page looks like:
 
-![Setup](./images/setup.png)
+![EKStender Setup](./images/ekstender-setup.gif)
 
 #### Clean up 
 
@@ -107,5 +107,5 @@ eksctl delete cluster --name eks1
 
 - EKS/Fargate is not supported.
 - Only one single node group per cluster is supported.
-- If you enabled Calico (by default it is not enabled) the cleanup script will not delete the iptables on the nodes. Either follow [these steps](https://github.com/projectcalico/calico/blob/master/hack/remove-calico-policy/remove-policy.md) or re-deploy the node group (or kill the instances and let ASG re-deploy them).  
+- If Calico is enabled (by default it is not) the cleanup script will not delete the iptables on the nodes. Either follow [these steps](https://github.com/projectcalico/calico/blob/master/hack/remove-calico-policy/remove-policy.md) or re-deploy the instances.  
 
