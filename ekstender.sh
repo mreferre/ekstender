@@ -469,10 +469,10 @@ appmesh() {
   errorcheck ${FUNCNAME}
   ns=`kubectl get namespace appmesh-system --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
   if [[ $ns = appmesh-system ]]; 
-      then logger "blue" "Namespace exists. Skipping..."
+      then logger "blue" "Namespace 'appmesh-system' exists. Skipping..."
       else kubectl create ns appmesh-system >> "${LOG_OUTPUT}" 2>&1
            errorcheck ${FUNCNAME}
-           logger "blue" "Namespace created...";
+           logger "blue" "Namespace 'appmesh-system' created...";
   fi 
   eksctl create iamserviceaccount --cluster $CLUSTER_NAME --namespace appmesh-system --name appmesh-controller --attach-policy-arn  arn:aws:iam::aws:policy/AWSCloudMapFullAccess,arn:aws:iam::aws:policy/AWSAppMeshFullAccess --override-existing-serviceaccounts --approve >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
@@ -484,8 +484,15 @@ appmesh() {
   helm upgrade -i appmesh-inject eks/appmesh-inject --namespace appmesh-system --set mesh.name=$MESH_NAME --set mesh.create=true >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "The mesh name is: " $MESH_NAME >> "${LOG_OUTPUT}" 2>&1
-  # for now only the default namespace is enabled to inject the sidecar automatically
-  kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook=enabled --overwrite >> "${LOG_OUTPUT}" 2>&1
+  # A new namespace called `appmesh-app` is created and tagged to autoinject the envoy proxy
+  ns=`kubectl get namespace appmesh-app --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = appmesh-app ]]; 
+      then logger "blue" "Namespace 'appmesh-app' exists. Skipping..."
+      else kubectl create ns appmesh-app >> "${LOG_OUTPUT}" 2>&1
+           errorcheck ${FUNCNAME}
+           logger "blue" "Namespace 'appmesh-app' created...";
+  fi 
+  kubectl label namespace appmesh-app appmesh.k8s.aws/sidecarInjectorWebhook=enabled --overwrite >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Appmesh components have been installed properly"
 }
@@ -553,7 +560,7 @@ main() {
   prometheus #ns = prometheus
   grafana #ns = grafana
   cloudwatchcontainerinsights #ns = amazon-cloudwatch
-  appmesh #ns = appmesh-system
+  appmesh #ns = appmesh-system + appmesh-app 
   if [[ $DEMOAPP = "yes" ]]; then demoapp; fi; #ns = default 
   congratulations
 }

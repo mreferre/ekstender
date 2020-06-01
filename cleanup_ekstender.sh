@@ -40,7 +40,7 @@ eksctl delete iamserviceaccount --region $AWS_REGION --name appmesh-controller -
 helm delete appmesh-inject --namespace appmesh-system
 helm delete appmesh-controller --namespace appmesh-system
 kubectl delete namespace appmesh-system --ignore-not-found
-kubectl label namespace default appmesh.k8s.aws/sidecarInjectorWebhook-
+kubectl delete namespace appmesh-app --ignore-not-found
 
 # Delete the CW agent beta for Prometheus deletes everything 
 template=`curl -sS https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/prometheus-beta/k8s-deployment-manifest-templates/deployment-mode/service/cwagent-prometheus/prometheus-eks.yaml` 
