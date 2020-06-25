@@ -37,7 +37,6 @@ kubectl delete -f https://raw.githubusercontent.com/mreferre/yelb/master/deploym
 # the CRDs are the first to be installed in the docs (and so originally the last to be uninstalled here) but due to a racing condition moving their deletion at the top 
 kubectl delete --ignore-not-found -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master
 eksctl delete iamserviceaccount --region $AWS_REGION --name appmesh-controller --namespace appmesh-system --cluster $CLUSTER_NAME
-helm delete appmesh-inject --namespace appmesh-system
 helm delete appmesh-controller --namespace appmesh-system
 kubectl delete namespace appmesh-system --ignore-not-found
 kubectl delete namespace appmesh-app --ignore-not-found

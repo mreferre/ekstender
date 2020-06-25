@@ -481,8 +481,6 @@ appmesh() {
   APP_MESH_CONTROLLER_VERSION=$(kubectl get deployment -n appmesh-system appmesh-controller -o json  | jq -r ".spec.template.spec.containers[].image" | cut -f2 -d ':')  >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "The AppMesh controller version is: " $APP_MESH_CONTROLLER_VERSION >> "${LOG_OUTPUT}" 2>&1 
-  helm upgrade -i appmesh-inject eks/appmesh-inject --namespace appmesh-system --set mesh.name=$MESH_NAME --set mesh.create=true >> "${LOG_OUTPUT}" 2>&1 
-  errorcheck ${FUNCNAME}
   echo "The mesh name is: " $MESH_NAME >> "${LOG_OUTPUT}" 2>&1
   # A new namespace called `appmesh-app` is created and tagged to autoinject the envoy proxy
   ns=`kubectl get namespace appmesh-app --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
