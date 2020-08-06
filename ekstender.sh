@@ -19,11 +19,13 @@
 : ${REGION:=$(aws configure get region)}
 : ${AWS_REGION:=${REGION}} 
 : ${EXTERNALDASHBOARD:=yes}  
+: ${EXTERNALKUBECOST:=yes}  
 : ${EXTERNALPROMETHEUS:=no}  
 : ${DEMOAPP:=yes}  
 : ${CALICO:=no}  
 : ${MESH_NAME:="ekstender-mesh"}
 : ${MESH_REGION:=${REGION}} 
+: ${KUBECOST_CODE:=${KUBECOST_CODE}}
 export REGION
 export AWS_REGION
 export EXTERNALDASHBOARD
@@ -32,6 +34,8 @@ export DEMOAPP
 export NAMESPACE
 export MESH_NAME
 export MESH_REGION
+export EXTERNALKUBECOST
+export KUBECOST_CODE
 ###########################################################
 ###########           END OF USER INPUTS        ###########
 ###########################################################
@@ -120,9 +124,11 @@ welcome() {
   logger "yellow" "Node instance role    : $NODE_INSTANCE_ROLE"
   logger "yellow" "External dashboard    : $EXTERNALDASHBOARD"
   logger "yellow" "External Prometheus   : $EXTERNALPROMETHEUS"
+  logger "yellow" "External Kubecost     : $EXTERNALKUBECOST"
   logger "yellow" "Mesh name             : $MESH_NAME"
   logger "yellow" "Demo application      : $DEMOAPP"
   logger "yellow" "Calico                : $CALICO"
+  logger "yellow" "Kubecost code         : $KUBECOST_CODE"
   logger "green" "--------------------------------------------------------------"
   logger "green" "You are about to EKStend your EKS cluster with the following add-ons"
   logger "blue" "* A generic admin Service Account (eks-admin))"
@@ -138,6 +144,7 @@ welcome() {
   logger "blue" "* Prometheus"
   logger "blue" "* Grafana"
   logger "blue" "* CloudWatch Container Insights"
+  logger "blue" "* Kubecost"
   logger "blue" "* AppMesh controller and sidecar injector"
   logger "blue" "* Demo application (Yelb)"
   logger "yellow" "Press [Enter] to continue or CTRL-C to abort..."
@@ -169,6 +176,8 @@ helmrepos() {
   errorcheck ${FUNCNAME}
   helm repo add eks https://aws.github.io/eks-charts >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  helm repo add kubecost https://kubecost.github.io/cost-analyzer/ >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}  
   helm repo update >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   logger "green" "Importing required Helm repos has completed..."
@@ -298,6 +307,7 @@ clusterautoscaler() {
   if [[ $CLUSTER_VERSION = 1.14 ]]; then CA_IMAGE="k8s.gcr.io/cluster-autoscaler:v1.14.8"; fi >> "${LOG_OUTPUT}" 2>&1
   if [[ $CLUSTER_VERSION = 1.15 ]]; then CA_IMAGE="us.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:v1.15.6"; fi >> "${LOG_OUTPUT}" 2>&1
   if [[ $CLUSTER_VERSION = 1.16 ]]; then CA_IMAGE="us.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:v1.16.5"; fi >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CLUSTER_VERSION = 1.17 ]]; then CA_IMAGE="us.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:v1.17.3"; fi >> "${LOG_OUTPUT}" 2>&1
   template=`cat "./configurations/cluster_autoscaler.yaml" | sed -e "s/<YOUR CLUSTER NAME>/$CLUSTER_NAME/g" -e "s*<CA IMAGE>*$CA_IMAGE*g"` >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   echo "$template" | kubectl apply -f - >> "${LOG_OUTPUT}" 2>&1
@@ -343,9 +353,9 @@ dashboard() {
                else logger "blue" "The Kubernetes dashboard is not being exposed to the Internet......"
           fi
   fi
-  # If you opted not expose the dashboard via the CLB, start the proxy like this: kubectl proxy 
+  # If you opted not expose the dashboard via the CLB, start the proxy like this: kubectl proxy --port=8080 --accept-hosts="^*$" 
   # and connect to: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/#!/login
-  # (If you are using Cloud 9 do this: kubectl proxy --port=8080 --accept-hosts="^*$"  - and connect to: http://localhost:8080/api/v1/......) 
+  # (If you are using Cloud 9 do this: kubectl proxy --port=8080 --accept-hosts="^*$"  - and "preview app" + add the full URL /api/v1/......) 
   # If you opted to expose the dashboard via the CLB, connect to https://<elb-fqdn>:8443
   #HOW TO GET A TOKEN
   # grab the token: kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep eks-admin | awk '{print $1}')
@@ -495,6 +505,44 @@ appmesh() {
   logger "green" "Appmesh components have been installed properly"
 }
 
+kubecost() {
+  banner "Kubecost"
+  logger "green" "Kubecost setup is starting..."
+  logger "green" "Kubecost requires a setup code (source it here: kubecost.com/install)"
+  logger "green" "set the value of KUBECOST_CODE to the code value you sourced"
+  
+  # https://aws.amazon.com/blogs/containers/how-to-track-costs-in-multi-tenant-amazon-eks-clusters-using-kubecost/
+  ns=`kubectl get namespace kubecost --output json --ignore-not-found | jq --raw-output .metadata.name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $ns = kubecost ]]; 
+      then logger "blue" "Namespace exists. Skipping..."; 
+      else kubectl create namespace kubecost >> "${LOG_OUTPUT}" 2>&1
+      logger "blue" "Namespace created...";
+  fi  
+  CHART=`helm list --namespace kubecost --filter 'kubecost' --output json | jq --raw-output .[0].name`  >> "${LOG_OUTPUT}" 2>&1
+  if [[ $CHART = "kubecost" ]]; 
+      then logger "blue" "Kubecost is already installed. Skipping..."; 
+      else if [[ -z "$KUBECOST_CODE" ]];  
+                then logger "blue" "I can't find the Kubecost install code in KUBECOST_CODE. Skipping...";     
+                else helm install kubecost kubecost/cost-analyzer --namespace kubecost \
+                      --namespace kubecost \
+                      --set kubecostToken=${KUBECOST_CODE} \
+                      --set prometheus.kubeStateMetrics.enabled=false \
+                      --set prometheus.nodeExporter.enabled=false >> "${LOG_OUTPUT}" 2>&1
+                     if [[ $EXTERNALKUBECOST = "yes" ]] 
+                        then kubectl expose deployment kubecost-cost-analyzer --type=LoadBalancer --name=kubecost-external --port 9090 -n kubecost >> "${LOG_OUTPUT}" 2>&1 
+                             errorcheck ${FUNCNAME}
+                             logger "blue" "Warning: I am exposing Kubecost to the Internet..."
+                        else logger "blue" "Kubecost is not being exposed to the Internet......"
+                     fi
+           fi 
+  fi
+  # If you opted not expose Kubecost via the ELB, start the proxy like this: kubectl port-forward --namespace kubecost deployment/kubecost-cost-analyzer 9090 
+  # and connect to: http://localhost:9090
+  # (If you are using Cloud 9 do this: kubectl port-forward --namespace kubecost deployment/kubecost-cost-analyzer 8080:9090  - and "preview the app")  
+  # If you opted to expose the dashboard via the ELB, connect to http://<elb-fqdn>:9090
+  logger "green" "Kubecost has been installed properly!"
+}
+
 demoapp() {
   banner "Yelb demo application"
   logger "green" "Demo application setup is starting..."
@@ -519,6 +567,8 @@ congratulations() {
   errorcheck ${FUNCNAME}
   DASHBOARDELB=`kubectl get service kubernetes-dashboard-external -n kubernetes-dashboard --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
+  KUBECOSTELB=`kubectl get service kubecost-external -n kubecost --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
+  errorcheck ${FUNCNAME}
   DEMOAPPALBURL=`kubectl get ingress yelb-ui -n default --output json | jq --raw-output .status.loadBalancer.ingress[0].hostname` >> "${LOG_OUTPUT}" 2>&1
   errorcheck ${FUNCNAME}
   logger "green" "Congratulations! You made it!"
@@ -532,6 +582,9 @@ congratulations() {
   fi
   if [ ! "$DASHBOARDELB" = null ] 
     then logger "yellow" "Kubernetes Dashboard : https://"$DASHBOARDELB:8443 
+  fi
+  if [ ! "KUBECOSTELB" = null ] 
+    then logger "yellow" "Kubecost Dashboard   : http://"$KUBECOSTELB:9090 
   fi
   if [ ! "$DEMOAPPALBURL" = null ] 
     then logger "yellow" "Demo application     : http://"$DEMOAPPALBURL:80 
@@ -559,6 +612,7 @@ main() {
   grafana #ns = grafana
   cloudwatchcontainerinsights #ns = amazon-cloudwatch
   appmesh #ns = appmesh-system + appmesh-app 
+  kubecost #ns = kubecost 
   if [[ $DEMOAPP = "yes" ]]; then demoapp; fi; #ns = default 
   congratulations
 }

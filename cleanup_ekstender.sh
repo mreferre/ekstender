@@ -34,6 +34,10 @@ echo AWS_REGION          : $AWS_REGION
 
 kubectl delete -f https://raw.githubusercontent.com/mreferre/yelb/master/deployments/platformdeployment/Kubernetes/yaml/yelb-k8s-ingress-alb-ip.yaml --ignore-not-found -n default
 
+kubectl delete service kubecost-external --namespace kubecost --ignore-not-found 
+helm delete kubecost --namespace kubecost 
+kubectl delete namespace kubecost --ignore-not-found 
+
 # the CRDs are the first to be installed in the docs (and so originally the last to be uninstalled here) but due to a racing condition moving their deletion at the top 
 kubectl delete --ignore-not-found -k https://github.com/aws/eks-charts/stable/appmesh-controller/crds?ref=master
 eksctl delete iamserviceaccount --region $AWS_REGION --name appmesh-controller --namespace appmesh-system --cluster $CLUSTER_NAME

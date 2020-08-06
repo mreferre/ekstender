@@ -35,6 +35,7 @@ This is a list of modules, features and configurations that `EKStender` can enab
 - Grafana
 - CloudWatch Container Insights
 - AppMesh controller and sidecar injector
+- Kubecost
 - Demo application ([Yelb](https://github.com/mreferre/yelb))
 
 In addition to the above, a multi-purpose `eks-admin` Service Account is created: it can be used to login into the Dashboard via grabbing its token. Note also that some of these add-ons can be enabled/disabled. Look at the `USER INPUTS` section of the `ekstender.sh` script to check for what is enabled and what not. In addition, when you launch the script a summary will show what it will install.
