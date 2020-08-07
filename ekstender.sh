@@ -325,11 +325,12 @@ verticalpodautoscaler() {
   if [[ $VPA_ADMISSION_CONTROLLER != "vpa-admission-controller" ]];
     then 
       if [[ ! -d "autoscaler" ]]
-        then git clone https://github.com/kubernetes/autoscaler.git >> "${LOG_OUTPUT}" 2>&1
+        # the reason because the 0.8 branch is required is due to this issue: https://github.com/kubernetes/autoscaler/issues/3397
+        # if openssl111 is available then you could clone master  
+        then git clone -b vpa-release-0.8 https://github.com/kubernetes/autoscaler.git >> "${LOG_OUTPUT}" 2>&1
          errorcheck ${FUNCNAME}
         else logger "blue" "The autoscaler repo already exists. Skipping the cloning..."
       fi   
-      errorcheck ${FUNCNAME}
       ./autoscaler/vertical-pod-autoscaler/hack/vpa-up.sh >> "${LOG_OUTPUT}" 2>&1
       errorcheck ${FUNCNAME};
     else logger "blue" "The autoscaler pods seem to be deployed already. Skipping the installation..."

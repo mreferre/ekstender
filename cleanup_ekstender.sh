@@ -79,9 +79,10 @@ kubectl delete service kubernetes-dashboard-external -n kubernetes-dashboard --i
 kubectl delete --ignore-not-found -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-beta8/aio/deploy/recommended.yaml
 
 # this script for some reason spits a couple of error messages at the end trying to delete 2 CRDs that it has deleted at the beginning
-if [[ ! -d "autoscaler" ]]; then git clone https://github.com/kubernetes/autoscaler.git; fi   
+if [[ ! -d "autoscaler" ]]; then git clone -b vpa-release-0.8 https://github.com/kubernetes/autoscaler.git; fi   
+# the reason because the 0.8 branch is required is due to this issue: https://github.com/kubernetes/autoscaler/issues/3397
+# if openssl111 is available then you could clone master  
 ./autoscaler/vertical-pod-autoscaler/hack/vpa-down.sh 
-
 kubectl delete --ignore-not-found -f ./configurations/cluster_autoscaler.yaml 
 
 template=`curl -sS https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.4/docs/examples/alb-ingress-controller.yaml | sed -e "s/# - --cluster-name=devCluster/- --cluster-name=$CLUSTER_NAME/g" -e "s/# - --aws-vpc-id=vpc-xxxxxx/- --aws-vpc-id=$VPC_ID/g" -e "s/# - --aws-region=us-west-1/- --aws-region=$AWS_REGION/g"`  
