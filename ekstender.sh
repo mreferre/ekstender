@@ -248,7 +248,7 @@ csiefs() {
   banner "CSI EFS Driver"
   logger "green" "EFS CSI support deployment is starting..."
   # source: https://docs.aws.amazon.com/eks/latest/userguide/efs-csi.html
-  kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=master" >> "${LOG_OUTPUT}" 2>&1 
+  kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/ecr/?ref=release-1.0" >> "${LOG_OUTPUT}" 2>&1 
   errorcheck ${FUNCNAME}
   logger "green" "EFS CSI support has been installed properly!"
 }
